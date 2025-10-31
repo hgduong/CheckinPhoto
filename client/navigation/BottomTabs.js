@@ -5,7 +5,9 @@ import HomeScreen from "../screens/HomeScreen";
 import CameraScreen from "../screens/CameraScreen";
 import MapScreen from "../screens/MapScreen";
 import GalleryScreen from "../screens/GalleryScreen";
+import CreateCaptionScreen from "../screens/CreateCaptionScreen";
 import ProfileScreen from "../screens/ProfileScreen";
+import CameraAssist from "../screens/CameraAssist";
 import HomeIMG from "../assets/home.png"; // ✅ Ảnh icon tùy chỉnh
 import Icon from "react-native-vector-icons/Ionicons";
 import Lib from "../assets/lib.png";
@@ -48,7 +50,7 @@ export default function BottomTabs() {
         }}
       />
 
-      {/* Camera */}
+      {/* Camera - Đáng nhẽ cái này là thư viện này*/}
       <Tab.Screen
         name="Camera"
         component={HomeScreen}
@@ -64,7 +66,7 @@ export default function BottomTabs() {
         }}
       />
 
-      {/* Bản đồ */}
+      {/* Bản đồ - Đáng nhẽ cái này là Camera */}
       <Tab.Screen
         name="Map"
         component={HomeScreen}
@@ -80,10 +82,10 @@ export default function BottomTabs() {
         }}
       />
 
-      {/* Thư viện ảnh */}
+      {/* Thư viện ảnh - Đáng nhẽ phải là MAP */}
       <Tab.Screen
         name="Gallery"
-        component={HomeScreen}
+        component={MapScreen}
         options={{
           tabBarLabel: "Maps",
           
