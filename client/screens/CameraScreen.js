@@ -5,6 +5,7 @@ import * as Location from 'expo-location';
 import * as MediaLibrary from 'expo-media-library';
 import * as FileSystem from 'expo-file-system';
 import AsyncStorage from '@react-native-async-storage/async-storage';
+import * as ImagePicker from 'expo-image-picker';
 import { useNavigation } from '@react-navigation/native';
 
 export default function CameraScreen() {
@@ -67,7 +68,43 @@ export default function CameraScreen() {
 
   const isCameraModuleAvailable = () => {
     // expo-camera should expose requestCameraPermissionsAsync; use that to detect availability
-    return Camera && typeof Camera.requestCameraPermissionsAsync === 'function';
+    try {
+      if (!Camera) return false;
+      // ensure it's a component (function or object with render)
+      const isFunc = typeof Camera === 'function';
+      const isObjWithRender = typeof Camera === 'object' && (typeof Camera.render === 'function' || !!Camera.displayName);
+      return (typeof Camera.requestCameraPermissionsAsync === 'function') && (isFunc || isObjWithRender);
+    } catch (e) {
+      return false;
+    }
+  };
+
+  const handleOpenSystemCamera = async () => {
+    try {
+      // Request camera permissions for ImagePicker
+      const { status } = await ImagePicker.requestCameraPermissionsAsync();
+      if (status !== 'granted') {
+        Alert.alert('Permission required', 'Camera permission is required to take photos');
+        return;
+      }
+
+      const result = await ImagePicker.launchCameraAsync({ quality: 0.8, allowsEditing: false });
+      if (!result.cancelled) {
+        // result.uri is the image path
+        setCapturedUri(result.uri);
+        // get location (best-effort)
+        try {
+          const loc = await Location.getCurrentPositionAsync({});
+          setCapturedLocation(loc);
+        } catch (e) {
+          console.warn('Could not get location after system camera:', e);
+        }
+        setPreviewVisible(true);
+      }
+    } catch (e) {
+      console.error('System camera error:', e);
+      Alert.alert('Error', 'Could not open system camera');
+    }
   };
 
   const takePicture = async () => {
@@ -245,10 +282,26 @@ export default function CameraScreen() {
   };
 
   if (hasPermission === null) {
-    return <View />;
+    return (
+      <View style={[styles.container, { justifyContent: 'center', alignItems: 'center', padding: 20 }]}> 
+        <ActivityIndicator size="large" />
+        <Text style={{ marginTop: 12, textAlign: 'center' }}>Requesting camera permissions...</Text>
+        <TouchableOpacity onPress={() => setRetryTick(t => t + 1)} style={{ marginTop: 12, backgroundColor: '#2196F3', padding: 10, borderRadius: 8 }}>
+          <Text style={{ color: 'white' }}>Retry permissions</Text>
+        </TouchableOpacity>
+      </View>
+    );
   }
   if (hasPermission === false) {
-    return <Text>No access to camera or location</Text>;
+    return (
+      <View style={[styles.container, { justifyContent: 'center', alignItems: 'center', padding: 20 }]}> 
+        <Text style={{ textAlign: 'center', marginBottom: 12 }}>No access to camera.</Text>
+        <Text style={{ textAlign: 'center', marginBottom: 12 }}>Please enable camera permissions for this app in system settings.</Text>
+        <TouchableOpacity onPress={() => setRetryTick(t => t + 1)} style={{ backgroundColor: '#2196F3', padding: 10, borderRadius: 8 }}>
+          <Text style={{ color: 'white' }}>Retry</Text>
+        </TouchableOpacity>
+      </View>
+    );
   }
   // If the native Camera module isn't available (e.g., running in Expo Go without the native module),
   // render a friendly message instead of trying to render <Camera /> which would crash.
@@ -264,10 +317,13 @@ export default function CameraScreen() {
     );
   }
 
+  const CameraComponent = (Camera && (typeof Camera === 'function' || (typeof Camera === 'object' && (typeof Camera.render === 'function' || !!Camera.displayName)))) ? Camera : null;
+
   return (
     <View style={styles.container}>
-      <Camera style={styles.camera} type={type} ref={cameraRef} onCameraReady={() => setCameraReady(true)}>
-        <View style={styles.buttonContainer}>
+      {CameraComponent ? (
+        <CameraComponent style={styles.camera} type={type} ref={cameraRef} onCameraReady={() => setCameraReady(true)}>
+          <View style={styles.buttonContainer}>
           <TouchableOpacity
             style={styles.button}
             onPress={() => {
@@ -282,7 +338,12 @@ export default function CameraScreen() {
             <Text style={styles.text}>{cameraReady ? 'Take Photo' : 'Preparing...'}</Text>
           </TouchableOpacity>
         </View>
-      </Camera>
+        </CameraComponent>
+      ) : (
+        <View style={[styles.camera, { justifyContent: 'center', alignItems: 'center' }]}>
+          <Text>Camera component unavailable in this runtime.</Text>
+        </View>
+      )}
       <Modal visible={previewVisible} animationType="slide" transparent={true}>
         <View style={styles.previewContainer}>
           <View style={styles.previewContent}>
