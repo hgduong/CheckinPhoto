@@ -50,10 +50,10 @@ export default function BottomTabs() {
         }}
       />
 
-      {/* Camera - Đáng nhẽ cái này là thư viện này*/}
+      {/* Thư viện ảnh */}
       <Tab.Screen
-        name="Camera"
-        component={HomeScreen}
+        name="Gallery"
+        component={GalleryScreen}
         options={{
           tabBarLabel: "Thư viện",
           tabBarIcon: ({ color, size }) => (
@@ -66,10 +66,10 @@ export default function BottomTabs() {
         }}
       />
 
-      {/* Bản đồ - Đáng nhẽ cái này là Camera */}
+      {/* Camera */}
       <Tab.Screen
-        name="Map"
-        component={HomeScreen}
+        name="Camera"
+        component={CameraScreen}
         options={{
           tabBarLabel: "Camera",
           tabBarIcon: ({ color, size }) => (
@@ -82,13 +82,12 @@ export default function BottomTabs() {
         }}
       />
 
-      {/* Thư viện ảnh - Đáng nhẽ phải là MAP */}
+      {/* Bản đồ */}
       <Tab.Screen
-        name="Gallery"
+        name="Map"
         component={MapScreen}
         options={{
           tabBarLabel: "Maps",
-          
           tabBarIcon: ({ color, size }) => (
             <Image
               source={Maps}
