@@ -137,3 +137,25 @@ dist
 # Vite logs files
 vite.config.js.timestamp-*
 vite.config.ts.timestamp-*
+
+# Expo
+.expo/
+.expo-shared/
+*.jks
+*.p8
+*.p12
+*.key
+*.mobileprovision
+*.orig.*
+web-build/
+
+# macOS
+.DS_Store
+
+# Backend uploads (chứa ảnh người dùng upload)
+backend/uploads/*
+!backend/uploads/.gitkeep
+
+# Temporary files
+*.tmp
+*.temp
