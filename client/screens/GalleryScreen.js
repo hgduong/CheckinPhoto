@@ -11,9 +11,12 @@ import {
   Share,
   ScrollView,
   ActivityIndicator,
+  RefreshControl,
+  Alert,
 } from 'react-native';
 import * as Location from 'expo-location';
-import { MaterialIcons } from '@expo/vector-icons';
+import MaterialIcons from '@expo/vector-icons/MaterialIcons';
+import { useFocusEffect } from '@react-navigation/native';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 
 export default function GalleryScreen({ navigation }) {
@@ -28,10 +31,11 @@ export default function GalleryScreen({ navigation }) {
   const [regions, setRegions] = useState([]);
   const [selectedRegion, setSelectedRegion] = useState(null);
 
-  useEffect(() => {
-    // load posts from backend (app-specific storage)
-    loadImages();
-  }, []);
+  useFocusEffect(
+    React.useCallback(() => {
+      loadImages();
+    }, [])
+  );
 
   const loadImages = async () => {
     setLoading(true);
@@ -39,6 +43,8 @@ export default function GalleryScreen({ navigation }) {
     try {
       const rawLocal = await AsyncStorage.getItem('LOCAL_POSTS');
       const local = rawLocal ? JSON.parse(rawLocal) : [];
+      console.log('📸 Gallery: Loaded', local.length, 'photos from storage');
+
       if (Array.isArray(local) && local.length > 0) {
         // derive regions from local posts
         const regionGroups = local.reduce((groups, image) => {
@@ -51,6 +57,7 @@ export default function GalleryScreen({ navigation }) {
         setImages(local);
       } else {
         // no local posts — show empty state
+        console.log('📸 Gallery: No photos found');
         setRegions([]);
         setImages([]);
       }
@@ -64,29 +71,11 @@ export default function GalleryScreen({ navigation }) {
     }
   };
 
-  const getImageLocation = async (asset) => {
-    try {
-      // Try to get location from image metadata
-      // This is a placeholder - you'll need to implement actual EXIF reading
-      return null;
-    } catch (error) {
-      console.error('Error getting image location:', error);
-      return null;
-    }
-  };
+  const onRefresh = React.useCallback(() => {
+    loadImages();
+  }, []);
 
-  const reverseGeocode = async (location) => {
-    try {
-      const result = await Location.reverseGeocodeAsync({
-        latitude: location.latitude,
-        longitude: location.longitude,
-      });
-      return result[0]?.region || 'Unknown';
-    } catch (error) {
-      console.error('Error reverse geocoding:', error);
-      return 'Unknown';
-    }
-  };
+
 
   const handleImageSelect = async (image) => {
     setSelectedImage(image);
@@ -155,6 +144,7 @@ export default function GalleryScreen({ navigation }) {
             data={regions}
             renderItem={renderRegionSection}
             keyExtractor={item => item}
+            refreshControl={<RefreshControl refreshing={loading} onRefresh={onRefresh} />}
           />
         ) : (
           <View style={{ flex: 1, justifyContent: 'center', alignItems: 'center', padding: 20 }}>

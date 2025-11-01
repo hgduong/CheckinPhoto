@@ -1,20 +1,18 @@
 import React from "react";
-import { Image } from "react-native"; // ✅ Bổ sung import Image
+import { Image } from "react-native";
 import { createBottomTabNavigator } from "@react-navigation/bottom-tabs";
 import HomeScreen from "../screens/HomeScreen";
-import CameraScreen from "../screens/CameraScreen";
+import CameraStack from "./CameraStack";
 import MapScreen from "../screens/MapScreen";
 import GalleryScreen from "../screens/GalleryScreen";
-import CreateCaptionScreen from "../screens/CreateCaptionScreen";
 import ProfileScreen from "../screens/ProfileScreen";
-import CameraAssist from "../screens/CameraAssist";
-import HomeIMG from "../assets/home.png"; // ✅ Ảnh icon tùy chỉnh
-import Icon from "react-native-vector-icons/Ionicons";
+
+import HomeIMG from "../assets/home.png";
 import Lib from "../assets/lib.png";
 import Cam from "../assets/cam.png";
 import Maps from "../assets/maps.png";
 import Profile from "../assets/pro5.png";
-// Tạo bottom tab navigator
+
 const Tab = createBottomTabNavigator();
 
 export default function BottomTabs() {
@@ -66,10 +64,10 @@ export default function BottomTabs() {
         }}
       />
 
-      {/* Camera */}
+      {/* Camera - Sử dụng Stack Navigator */}
       <Tab.Screen
         name="Camera"
-        component={CameraScreen}
+        component={CameraStack}
         options={{
           tabBarLabel: "Camera",
           tabBarIcon: ({ color, size }) => (

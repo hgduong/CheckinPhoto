@@ -1,165 +1,85 @@
-import React, { useState, useEffect, useRef } from 'react';
-import { StyleSheet, Text, View, TouchableOpacity, Image, Modal, ActivityIndicator, Share, Alert } from 'react-native';
-import { Camera } from 'expo-camera';
+import React, { useState, useRef } from 'react';
+import {
+  StyleSheet,
+  Text,
+  View,
+  TouchableOpacity,
+  Image,
+  Modal,
+  ActivityIndicator,
+  Share,
+  Alert,
+  Button,
+} from 'react-native';
+import { CameraView, useCameraPermissions } from 'expo-camera';
 import * as Location from 'expo-location';
+import { useForegroundPermissions } from 'expo-location';
 import * as MediaLibrary from 'expo-media-library';
-import * as FileSystem from 'expo-file-system';
+import { usePermissions as useMediaLibraryPermissions } from 'expo-media-library';
+import * as FileSystem from 'expo-file-system/legacy';
 import AsyncStorage from '@react-native-async-storage/async-storage';
-import * as ImagePicker from 'expo-image-picker';
 import { useNavigation } from '@react-navigation/native';
 
 export default function CameraScreen() {
-  const [hasPermission, setHasPermission] = useState(null);
-  const [hasCameraPermission, setHasCameraPermission] = useState(null);
-  const [hasLocationPermission, setHasLocationPermission] = useState(null);
-  const [hasMediaPermission, setHasMediaPermission] = useState(null);
+  const [hasPermission, requestPermission] = useCameraPermissions();
+  const [locationPermission, requestLocationPermission] = useForegroundPermissions();
+  const [mediaPermission, requestMediaPermission] = useMediaLibraryPermissions();
   const [cameraReady, setCameraReady] = useState(false);
-  const [type, setType] = useState(null); // will set after camera module is ready
-  const [location, setLocation] = useState(null);
+  const [facing, setFacing] = useState('back'); // 'back' hoặc 'front'
   const [previewVisible, setPreviewVisible] = useState(false);
   const [capturedUri, setCapturedUri] = useState(null);
   const [capturedLocation, setCapturedLocation] = useState(null);
   const [isSaving, setIsSaving] = useState(false);
   const cameraRef = useRef(null);
   const navigation = useNavigation();
-  const [retryTick, setRetryTick] = useState(0);
-
-  useEffect(() => {
-    (async () => {
-      // Request camera permissions
-      // guard: Camera module may be undefined on some platforms (web)
-      if (typeof Camera === 'undefined') {
-        console.error('expo-camera module is not available on this platform');
-        setHasPermission(false);
-        return;
-      }
-
-      const { status: cameraStatus } = await Camera.requestCameraPermissionsAsync();
-      setHasCameraPermission(cameraStatus === 'granted');
-
-      // Request location permissions (best-effort)
-      try {
-        const { status: locationStatus } = await Location.requestForegroundPermissionsAsync();
-        setHasLocationPermission(locationStatus === 'granted');
-      } catch (e) {
-        setHasLocationPermission(false);
-      }
-      // Request media library permission for saving images
-      try {
-        const { status: mediaStatus } = await MediaLibrary.requestPermissionsAsync();
-        setHasMediaPermission(mediaStatus === 'granted');
-      } catch (e) {
-        setHasMediaPermission(false);
-      }
-
-      // overall hasPermission for rendering camera view depends only on camera permission
-      setHasPermission(cameraStatus === 'granted');
-
-      // set default type now that Camera exists
-      try {
-        const defaultType = Camera?.Constants?.Type?.back;
-        if (defaultType) setType(defaultType);
-        else setType('back');
-      } catch (e) {
-        setType('back');
-      }
-    })();
-  }, [retryTick]);
-
-  const isCameraModuleAvailable = () => {
-    // expo-camera should expose requestCameraPermissionsAsync; use that to detect availability
-    try {
-      if (!Camera) return false;
-      // ensure it's a component (function or object with render)
-      const isFunc = typeof Camera === 'function';
-      const isObjWithRender = typeof Camera === 'object' && (typeof Camera.render === 'function' || !!Camera.displayName);
-      return (typeof Camera.requestCameraPermissionsAsync === 'function') && (isFunc || isObjWithRender);
-    } catch (e) {
-      return false;
-    }
-  };
-
-  const handleOpenSystemCamera = async () => {
-    try {
-      // Request camera permissions for ImagePicker
-      const { status } = await ImagePicker.requestCameraPermissionsAsync();
-      if (status !== 'granted') {
-        Alert.alert('Permission required', 'Camera permission is required to take photos');
-        return;
-      }
-
-      const result = await ImagePicker.launchCameraAsync({ quality: 0.8, allowsEditing: false });
-      if (!result.cancelled) {
-        // result.uri is the image path
-        setCapturedUri(result.uri);
-        // get location (best-effort)
-        try {
-          const loc = await Location.getCurrentPositionAsync({});
-          setCapturedLocation(loc);
-        } catch (e) {
-          console.warn('Could not get location after system camera:', e);
-        }
-        setPreviewVisible(true);
-      }
-    } catch (e) {
-      console.error('System camera error:', e);
-      Alert.alert('Error', 'Could not open system camera');
-    }
-  };
 
   const takePicture = async () => {
-    if (!cameraRef.current) {
-      console.warn('Camera ref not available yet');
-      return;
-    }
-    if (!cameraReady) {
-      console.warn('Camera not ready');
-      return;
-    }
-    if (typeof Camera === 'undefined') {
-      Alert.alert('Camera unavailable', 'Camera module is not available on this platform.');
-      return;
-    }
-    if (cameraRef.current) {
-      try {
-        // Take photo
-        const photo = await cameraRef.current.takePictureAsync({ quality: 0.8 });
+    if (!cameraRef.current || !cameraReady) return;
 
-        // Get current location (best effort)
-        let loc = null;
-        try {
-          loc = await Location.getCurrentPositionAsync({});
-        } catch (e) {
-          console.warn('Could not get location:', e);
-        }
-
-        setCapturedUri(photo.uri);
-        setCapturedLocation(loc);
-        setPreviewVisible(true);
-      } catch (error) {
-        console.error('Error taking picture:', error);
+    if (!locationPermission?.granted) {
+      const { status } = await requestLocationPermission();
+      if (status !== 'granted') {
+        console.log('Location permission denied. Proceeding without location.');
       }
+    }
+
+    try {
+      const photo = await cameraRef.current.takePictureAsync({ quality: 0.8 });
+      let loc = null;
+      if (locationPermission?.granted) {
+        try {
+          loc = await Location.getCurrentPositionAsync({
+            accuracy: Location.Accuracy.Balanced,
+          });
+        } catch (e) {
+          console.warn('Could not get location:', e.message || e);
+          // Không có location cũng OK, tiếp tục
+        }
+      }
+      setCapturedUri(photo.uri);
+      setCapturedLocation(loc);
+      setPreviewVisible(true);
+    } catch (error) {
+      console.error('Error taking picture:', error);
     }
   };
 
   const handleSaveToGallery = async () => {
     if (!capturedUri) return;
+
+    if (!mediaPermission?.granted) {
+      const { status } = await requestMediaPermission();
+      if (status !== 'granted') {
+        Alert.alert('Permission required', 'Media library permission is required to save photos.');
+        return;
+      }
+    }
+
     setIsSaving(true);
     try {
-      // Ensure we have location; prompt user if not
       let lat = capturedLocation?.coords?.latitude;
       let lng = capturedLocation?.coords?.longitude;
-      if (!lat || !lng) {
-        try {
-          const loc = await Location.getCurrentPositionAsync({});
-          lat = loc.coords.latitude;
-          lng = loc.coords.longitude;
-        } catch (e) {
-          console.warn('Location not available:', e);
-        }
-      }
 
-      // Try to reverse-geocode locally to get address (best-effort)
       let address = null;
       try {
         if (lat && lng) {
@@ -170,8 +90,6 @@ export default function CameraScreen() {
         console.warn('Reverse geocode failed:', e);
       }
 
-      const aiText = null; // no AI in local-only build
-
       Alert.alert(
         'Save photo',
         `${address?.city || address?.region || 'No address available'}\n\nSave photo to app storage?`,
@@ -181,31 +99,41 @@ export default function CameraScreen() {
             text: 'Save',
             onPress: async () => {
               try {
-                await ensureDirExists();
-                await saveToAppStorage(capturedUri, { aiDescription: aiText, address: address, location: (lat && lng) ? { type: 'Point', coordinates: [lng, lat] } : null });
-                Alert.alert('Saved', 'Photo saved to app storage');
-                setPreviewVisible(false);
+                await saveToAppStorage(capturedUri, {
+                  address,
+                  location: lat && lng ? { type: 'Point', coordinates: [lng, lat] } : null,
+                });
+                Alert.alert('Saved', 'Photo saved to app storage', [
+                  {
+                    text: 'OK',
+                    onPress: () => {
+                      setPreviewVisible(false);
+                      setCapturedUri(null);
+                      setCapturedLocation(null);
+                      // Navigate về Camera tab (reset stack)
+                      navigation.navigate('Camera', { screen: 'CameraMain' });
+                    },
+                  },
+                ]);
               } catch (e) {
                 console.warn('Could not save to app storage:', e);
                 Alert.alert('Error', 'Could not save photo');
               }
-            }
+            },
           },
           {
             text: 'Edit',
             onPress: () => {
               setPreviewVisible(false);
-              navigation.navigate('CreateCaption', {
+              navigation.navigate('CreateCaptionScreen', {
                 image: capturedUri,
-                location: (lat && lng) ? { type: 'Point', coordinates: [lng, lat] } : null,
-                aiSuggestion: aiText
+                location: lat && lng ? { type: 'Point', coordinates: [lng, lat] } : null,
               });
-            }
-          }
+            },
+          },
         ],
         { cancelable: true }
       );
-
     } catch (error) {
       console.error('Error in analyze & save:', error);
       Alert.alert('Error', 'Could not analyze or save photo');
@@ -214,57 +142,36 @@ export default function CameraScreen() {
     }
   };
 
-  // Helpers for app-local storage
   const APP_PHOTO_DIR = FileSystem.documentDirectory + 'photos/';
 
   const ensureDirExists = async () => {
-    try {
-      const info = await FileSystem.getInfoAsync(APP_PHOTO_DIR);
-      if (!info.exists) {
-        await FileSystem.makeDirectoryAsync(APP_PHOTO_DIR, { intermediates: true });
-      }
-    } catch (e) {
-      console.warn('Could not create photo dir:', e);
+    const dirInfo = await FileSystem.getInfoAsync(APP_PHOTO_DIR);
+    if (!dirInfo.exists) {
+      await FileSystem.makeDirectoryAsync(APP_PHOTO_DIR, { intermediates: true });
     }
   };
 
   const saveToAppStorage = async (uri, meta = {}) => {
-    // copy file into app documentDirectory/photos and save metadata in AsyncStorage
-    try {
-      const ts = Date.now();
-      const filename = `photo_${ts}.jpg`;
-      const dest = APP_PHOTO_DIR + filename;
-      await FileSystem.copyAsync({ from: uri, to: dest });
+    await ensureDirExists();
+    const ts = Date.now();
+    const filename = `photo_${ts}.jpg`;
+    const dest = APP_PHOTO_DIR + filename;
+    await FileSystem.copyAsync({ from: uri, to: dest });
 
-      const post = {
-        id: `local_${ts}`,
-        uri: dest,
-        createdAt: ts,
-        aiDescription: meta.aiDescription || null,
-        address: meta.address || null,
-        location: meta.location || null
-      };
+    const post = {
+      id: `local_${ts}`,
+      uri: dest,
+      createdAt: ts,
+      address: meta.address || null,
+      location: meta.location || null,
+    };
 
-      // store in AsyncStorage under key LOCAL_POSTS (array)
-      const raw = await AsyncStorage.getItem('LOCAL_POSTS');
-      let arr = raw ? JSON.parse(raw) : [];
-      arr.unshift(post);
-      await AsyncStorage.setItem('LOCAL_POSTS', JSON.stringify(arr));
-      return dest;
-    } catch (e) {
-      console.error('saveToAppStorage error', e);
-      throw e;
-    }
-  };
+    const raw = await AsyncStorage.getItem('LOCAL_POSTS');
+    let arr = raw ? JSON.parse(raw) : [];
+    arr.unshift(post);
+    await AsyncStorage.setItem('LOCAL_POSTS', JSON.stringify(arr));
 
-  const handleEdit = () => {
-    setPreviewVisible(false);
-    navigation.navigate('CreateCaption', {
-      image: capturedUri,
-      location: capturedLocation
-        ? { type: 'Point', coordinates: [capturedLocation.coords.longitude, capturedLocation.coords.latitude] }
-        : null,
-    });
+    console.log('📸 Camera: Saved photo to storage. Total photos:', arr.length);
   };
 
   const handleShare = async () => {
@@ -277,106 +184,60 @@ export default function CameraScreen() {
     }
   };
 
-  const handleUpload = async () => {
-    Alert.alert('Upload disabled', 'This build saves photos locally. Enable backend upload in a different build.');
-  };
-
   if (hasPermission === null) {
     return (
-      <View style={[styles.container, { justifyContent: 'center', alignItems: 'center', padding: 20 }]}> 
+      <View style={styles.container}>
         <ActivityIndicator size="large" />
-        <Text style={{ marginTop: 12, textAlign: 'center' }}>Requesting camera permissions...</Text>
-        <TouchableOpacity onPress={() => setRetryTick(t => t + 1)} style={{ marginTop: 12, backgroundColor: '#2196F3', padding: 10, borderRadius: 8 }}>
-          <Text style={{ color: 'white' }}>Retry permissions</Text>
-        </TouchableOpacity>
-      </View>
-    );
-  }
-  if (hasPermission === false) {
-    return (
-      <View style={[styles.container, { justifyContent: 'center', alignItems: 'center', padding: 20 }]}> 
-        <Text style={{ textAlign: 'center', marginBottom: 12 }}>No access to camera.</Text>
-        <Text style={{ textAlign: 'center', marginBottom: 12 }}>Please enable camera permissions for this app in system settings.</Text>
-        <TouchableOpacity onPress={() => setRetryTick(t => t + 1)} style={{ backgroundColor: '#2196F3', padding: 10, borderRadius: 8 }}>
-          <Text style={{ color: 'white' }}>Retry</Text>
-        </TouchableOpacity>
-      </View>
-    );
-  }
-  // If the native Camera module isn't available (e.g., running in Expo Go without the native module),
-  // render a friendly message instead of trying to render <Camera /> which would crash.
-  if (!isCameraModuleAvailable()) {
-    return (
-      <View style={[styles.container, { justifyContent: 'center', alignItems: 'center', padding: 20 }]}> 
-        <Text style={{ fontSize: 16, textAlign: 'center', marginBottom: 12 }}>Camera module is not available in this runtime.</Text>
-        <Text style={{ textAlign: 'center', marginBottom: 12 }}>If you're using Expo Go on Android, create a development build or use an emulator with the native modules installed.</Text>
-        <TouchableOpacity onPress={() => setRetryTick(t => t + 1)} style={{ backgroundColor: '#2196F3', padding: 10, borderRadius: 8 }}>
-          <Text style={{ color: 'white' }}>Retry</Text>
-        </TouchableOpacity>
       </View>
     );
   }
 
-  const CameraComponent = (Camera && (typeof Camera === 'function' || (typeof Camera === 'object' && (typeof Camera.render === 'function' || !!Camera.displayName)))) ? Camera : null;
+  if (hasPermission.granted === false) {
+    return (
+      <View style={styles.permissionContainer}>
+        <Text style={{ textAlign: 'center', marginBottom: 16 }}>
+          We need your permission to show the camera.
+        </Text>
+        <Button onPress={requestPermission} title="Grant Permission" />
+      </View>
+    );
+  }
+
+  function toggleCameraFacing() {
+    setFacing(current => (current === 'back' ? 'front' : 'back'));
+  }
 
   return (
     <View style={styles.container}>
-      {CameraComponent ? (
-        <CameraComponent style={styles.camera} type={type} ref={cameraRef} onCameraReady={() => setCameraReady(true)}>
-          <View style={styles.buttonContainer}>
-          <TouchableOpacity
-            style={styles.button}
-            onPress={() => {
-              const backType = Camera?.Constants?.Type?.back ?? 'back';
-              const frontType = Camera?.Constants?.Type?.front ?? 'front';
-              const current = type || backType;
-              setType(current === backType ? frontType : backType);
-            }}>
-            <Text style={styles.text}> Flip </Text>
-          </TouchableOpacity>
-          <TouchableOpacity style={[styles.captureButton, !cameraReady && { backgroundColor: '#999' }]} onPress={takePicture} disabled={!cameraReady}>
-            <Text style={styles.text}>{cameraReady ? 'Take Photo' : 'Preparing...'}</Text>
-          </TouchableOpacity>
-        </View>
-        </CameraComponent>
-      ) : (
-        <View style={[styles.camera, { justifyContent: 'center', alignItems: 'center' }]}>
-          <Text>Camera component unavailable in this runtime.</Text>
-        </View>
-      )}
-      <Modal visible={previewVisible} animationType="slide" transparent={true}>
-        <View style={styles.previewContainer}>
-          <View style={styles.previewContent}>
-            {capturedUri ? (
-              <Image source={{ uri: capturedUri }} style={styles.previewImage} />
-            ) : (
-              <ActivityIndicator size="large" />
-            )}
+      <CameraView
+        style={styles.camera}
+        facing={facing}
+        ref={cameraRef}
+        onCameraReady={() => setCameraReady(true)}
+      />
+      <View style={styles.buttonContainer}>
+        <TouchableOpacity style={styles.button} onPress={toggleCameraFacing}>
+          <Text style={styles.text}> Flip </Text>
+        </TouchableOpacity>
+        <TouchableOpacity
+          style={[styles.captureButton, !cameraReady && { opacity: 0.5 }]}
+          onPress={takePicture}
+          disabled={!cameraReady}
+        />
+      </View>
 
+      {previewVisible && (
+        <Modal animationType="slide" transparent={false} visible={previewVisible}>
+          <View style={styles.container}>
+            <Image source={{ uri: capturedUri }} style={styles.previewImage} />
             <View style={styles.previewButtons}>
-              <TouchableOpacity style={styles.smallButton} onPress={handleSaveToGallery} disabled={isSaving}>
-                <Text style={styles.buttonText}>{isSaving ? 'Saving...' : 'Save'}</Text>
-              </TouchableOpacity>
-
-              <TouchableOpacity style={styles.smallButton} onPress={handleEdit}>
-                <Text style={styles.buttonText}>Edit</Text>
-              </TouchableOpacity>
-
-              <TouchableOpacity style={styles.smallButton} onPress={handleUpload}>
-                <Text style={styles.buttonText}>Upload</Text>
-              </TouchableOpacity>
-
-              <TouchableOpacity style={styles.smallButton} onPress={handleShare}>
-                <Text style={styles.buttonText}>Share</Text>
-              </TouchableOpacity>
+              <Button title="Retake" onPress={() => setPreviewVisible(false)} />
+              <Button title="Save & Use" onPress={handleSaveToGallery} disabled={isSaving} />
+              <Button title="Share" onPress={handleShare} />
             </View>
-
-            <TouchableOpacity style={styles.retakeButton} onPress={() => setPreviewVisible(false)}>
-              <Text style={styles.buttonText}>Retake</Text>
-            </TouchableOpacity>
           </View>
-        </View>
-      </Modal>
+        </Modal>
+      )}
     </View>
   );
 }
@@ -384,75 +245,57 @@ export default function CameraScreen() {
 const styles = StyleSheet.create({
   container: {
     flex: 1,
+    backgroundColor: 'black',
+  },
+  permissionContainer: {
+    flex: 1,
+    justifyContent: 'center',
+    alignItems: 'center',
+    padding: 20,
   },
   camera: {
     flex: 1,
   },
   buttonContainer: {
-    flex: 1,
-    backgroundColor: 'transparent',
+    position: 'absolute',
+    bottom: 0,
+    left: 0,
+    right: 0,
     flexDirection: 'row',
-    margin: 20,
     justifyContent: 'space-between',
+    alignItems: 'flex-end',
+    padding: 40,
+    paddingBottom: 60,
   },
   button: {
-    alignSelf: 'flex-end',
     alignItems: 'center',
+    justifyContent: 'center',
     backgroundColor: 'rgba(0,0,0,0.5)',
-    padding: 15,
-    borderRadius: 8,
+    paddingHorizontal: 20,
+    paddingVertical: 10,
+    borderRadius: 20,
   },
   captureButton: {
-    alignSelf: 'flex-end',
-    alignItems: 'center',
-    backgroundColor: '#2196F3',
-    padding: 15,
-    borderRadius: 8,
+    width: 70,
+    height: 70,
+    borderRadius: 35,
+    backgroundColor: '#fff',
+    borderWidth: 5,
+    borderColor: '#ccc',
   },
   text: {
     fontSize: 18,
     color: 'white',
   },
-  previewContainer: {
-    flex: 1,
-    backgroundColor: 'rgba(0,0,0,0.7)',
-    justifyContent: 'center',
-    alignItems: 'center',
-  },
-  previewContent: {
-    width: '90%',
-    backgroundColor: '#fff',
-    borderRadius: 12,
-    padding: 10,
-    alignItems: 'center',
-  },
   previewImage: {
-    width: '100%',
-    height: 400,
-    borderRadius: 8,
-    marginBottom: 10,
+    flex: 1,
+    resizeMode: 'contain',
   },
   previewButtons: {
     flexDirection: 'row',
-    justifyContent: 'space-between',
-    width: '100%',
-    marginBottom: 10,
-  },
-  smallButton: {
-    flex: 1,
-    marginHorizontal: 5,
-    backgroundColor: '#2196F3',
-    padding: 10,
-    borderRadius: 8,
+    justifyContent: 'space-around',
     alignItems: 'center',
-  },
-  buttonText: {
-    color: 'white',
-    fontWeight: '600',
-  },
-  retakeButton: {
-    backgroundColor: 'gray',
-    padding: 8,
-    borderRadius: 8,
+    padding: 20,
+    backgroundColor: 'black',
   },
 });
