@@ -1,0 +1,48 @@
+{
+  "project_info": {
+    "project_number": "582814311643",
+    "project_id": "fir-c7f3b",
+    "storage_bucket": "fir-c7f3b.firebasestorage.app"
+  },
+  "client": [
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:582814311643:android:c07743dc1b3eebbbc398fe",
+        "android_client_info": {
+          "package_name": "checkingphoto.buildapk"
+        }
+      },
+      "oauth_client": [],
+      "api_key": [
+        {
+          "current_key": "AIzaSyB_Hns9YCvf7CtXGF2tsLGD_1vO0sGZMmA"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": []
+        }
+      }
+    },
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:582814311643:android:5c6e25d3cce840bac398fe",
+        "android_client_info": {
+          "package_name": "com.se1867nj.he181665.buildapk"
+        }
+      },
+      "oauth_client": [],
+      "api_key": [
+        {
+          "current_key": "AIzaSyB_Hns9YCvf7CtXGF2tsLGD_1vO0sGZMmA"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": []
+        }
+      }
+    }
+  ],
+  "configuration_version": "1"
+}

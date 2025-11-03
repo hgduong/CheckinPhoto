@@ -17,19 +17,12 @@ const Tab = createBottomTabNavigator();
 
 export default function BottomTabs() {
   return (
-    <Tab.Navigator
+    <Tab.Navigator initialRouteName="Profile"
       screenOptions={{
         headerShown: false,
-        tabBarStyle: {
-          backgroundColor: "#fff",
-          borderTopColor: "#ccc",
-          height: 75,
-        },
+        tabBarStyle: { backgroundColor: "#fff", borderTopColor: "#ccc", height: 75 },
         tabBarActiveTintColor: "#2196F3",
-        tabBarLabelStyle: {
-          fontSize: 12,
-          fontWeight: "600",
-        },
+        tabBarLabelStyle: { fontSize: 12, fontWeight: "600" },
       }}
     >
       {/* Trang chủ */}
