@@ -6,6 +6,7 @@ const fs = require('fs');
 const axios = require('axios');
 const aiService = require('../services/aiService');
 const CardPost = require('../models/CardPost.model');
+const Comment = require('../models/Comment.model');
 
 // Đảm bảo thư mục uploads tồn tại
 const uploadsDir = path.join(__dirname, '..', 'uploads');
@@ -213,5 +214,66 @@ router.get('/posts', async (req, res) => {
     });
   }
 });
+
+/**
+ * POST /api/posts/:id/comments
+ * Add a comment to a post
+ */
+router.post('/posts/:id/comments', async (req, res) => {
+  try {
+    const { name, avatar, text } = req.body;
+    if (!text) return res.status(400).json({ error: 'Comment text required' });
+
+    const comment = new Comment({
+      postId: req.params.id,
+      author: { name: name || 'Anonymous', avatar: avatar || '' },
+      text
+    });
+    await comment.save();
+
+    // Increment comment count on post
+    await CardPost.findByIdAndUpdate(req.params.id, { $inc: { comments: 1 } });
+
+    res.json({ success: true, comment });
+  } catch (error) {
+    console.error('Add comment error:', error);
+    res.status(500).json({ error: 'Failed to add comment', details: error.message });
+  }
+});
+
+/**
+ * GET /api/posts/:id/comments
+ * Get all comments for a post
+ */
+router.get('/posts/:id/comments', async (req, res) => {
+  try {
+    const comments = await Comment.find({ postId: req.params.id }).sort({ createdAt: -1 });
+    res.json({ success: true, comments });
+  } catch (error) {
+    console.error('Get comments error:', error);
+    res.status(500).json({ error: 'Failed to fetch comments', details: error.message });
+  }
+});
+
+/**
+ * PUT /api/posts/:id/share
+ * Increment share count for a post
+ */
+router.put('/posts/:id/share', async (req, res) => {
+  try {
+    const post = await CardPost.findByIdAndUpdate(
+      req.params.id,
+      { $inc: { shares: 1 } },
+      { new: true }
+    );
+    if (!post) return res.status(404).json({ error: 'Post not found' });
+
+    res.json({ success: true, shares: post.shares });
+  } catch (error) {
+    console.error('Share post error:', error);
+    res.status(500).json({ error: 'Failed to share post', details: error.message });
+  }
+});
+
 
 module.exports = router;

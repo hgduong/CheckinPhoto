@@ -30,6 +30,10 @@ export default function GalleryScreen({ navigation }) {
   const [editedSuggestions, setEditedSuggestions] = useState('');
   const [regions, setRegions] = useState([]);
   const [selectedRegion, setSelectedRegion] = useState(null);
+  const [commentText, setCommentText] = useState('');
+  const [loadingComments, setLoadingComments] = useState(false);
+  const [comments, setComments] = useState([]); 
+
 
   useFocusEffect(
     React.useCallback(() => {
@@ -84,8 +88,11 @@ export default function GalleryScreen({ navigation }) {
     if (image.aiDescription) suggestionsArr.push(image.aiDescription);
     setAiSuggestions(suggestionsArr);
     setEditedSuggestions(suggestionsArr.join('\n'));
+    fetchComments(image.id);
     setModalVisible(true);
   };
+
+
 
   const handleShare = async () => {
     try {
@@ -122,6 +129,32 @@ export default function GalleryScreen({ navigation }) {
       />
     </View>
   );
+
+  const fetchComments = async (imageId) => {
+    setLoadingComments(true);
+    try {
+      // Replace with backend call if available, for now use empty array
+      // const res = await fetch(`${API_URL}/posts/${imageId}/comments`);
+      // const data = await res.json();
+      const data = []; 
+      setComments(data);
+    } catch (error) {
+      console.error('Error fetching comments:', error);
+      setComments([]);
+    } finally {
+      setLoadingComments(false);
+    }
+  };
+
+  const handleAddComment = () => {
+    if (!commentText.trim()) return;
+
+    const newComment = { text: commentText };
+    setComments(prev => [...prev, newComment]);
+    setCommentText('');
+  };
+
+
 
   return (
     <View style={styles.container}>
@@ -178,9 +211,41 @@ export default function GalleryScreen({ navigation }) {
                   onChangeText={setEditedSuggestions}
                   placeholder="Edit AI suggestions..."
                 />
+                
               ) : (
                 <Text style={styles.suggestions}>{editedSuggestions}</Text>
               )}
+              <View style={{ marginTop: 10, width: '100%' }}>
+                <Text style={{ fontWeight: 'bold', marginBottom: 5 }}>Comments:</Text>
+                {loadingComments ? (
+                  <ActivityIndicator size="small" />
+                ) : (
+                  <ScrollView style={{ maxHeight: 100 }}>
+                    {comments.map((c, i) => (
+                      <Text key={i} style={{ marginBottom: 4 }}>• {c.text}</Text>
+                    ))}
+                  </ScrollView>
+                )}
+                <View style={{ flexDirection: 'row', marginTop: 5 }}>
+                  <TextInput
+                    value={commentText}
+                    onChangeText={setCommentText}
+                    placeholder="Add a comment..."
+                    style={{
+                      flex: 1,
+                      borderWidth: 1,
+                      borderColor: '#ccc',
+                      borderRadius: 8,
+                      paddingHorizontal: 10,
+                      height: 40,
+                    }}
+                  />
+                  <TouchableOpacity onPress={handleAddComment} style={{ marginLeft: 5, justifyContent: 'center' }}>
+                    <MaterialIcons name="send" size={24} color="#2196F3" />
+                  </TouchableOpacity>
+                </View>
+              </View>
+
             </ScrollView>
 
             <View style={styles.actionButtons}>
