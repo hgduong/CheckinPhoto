@@ -8,6 +8,9 @@
  ********************************************************************/
 
 import React, { useState, useRef } from "react";
+import { signOut } from "firebase/auth";
+import { auth } from "../firebaseConfig";
+
 import {
   View,
   Text,
@@ -163,12 +166,25 @@ const SettingsModal = ({ visible, onClose }) => {
   }, [visible]);
 
   const handleAction = (action) => {
-    onClose();
+  onClose();
+
+  if (action === "Logout") {
+    setTimeout(() => {
+      signOut(auth)
+        .then(() => {
+          Alert.alert("Đã đăng xuất");
+        })
+        .catch((error) => {
+          Alert.alert("Lỗi", error.message);
+        });
+    }, 300);
+  } else {
     setTimeout(() => {
       Alert.alert("Thông báo", `Bạn chọn: ${action}`);
-      // TODO: Xử lý API thật
     }, 300);
-  };
+  }
+};
+
 
   return (
     <Modal visible={visible} transparent animationType="none">
