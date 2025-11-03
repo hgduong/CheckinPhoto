@@ -8,14 +8,15 @@ import {
   Alert,
 } from "react-native";
 import { createUserWithEmailAndPassword } from "firebase/auth";
-import { auth } from "../firebaseConfig"; // Đảm bảo bạn đã cấu hình Firebase
+import { auth, db } from "../firebaseConfig"; // ✅ import db
+import { doc, setDoc } from "firebase/firestore"; // ✅ thêm Firestore
 
 export default function RegisterScreen({ navigation }) {
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [confirm, setConfirm] = useState("");
 
-  const handleRegister = () => {
+  const handleRegister = async () => {
     const trimmedEmail = email.trim();
     const trimmedPassword = password.trim();
     const trimmedConfirm = confirm.trim();
@@ -40,13 +41,34 @@ export default function RegisterScreen({ navigation }) {
       return;
     }
 
-    createUserWithEmailAndPassword(auth, trimmedEmail, trimmedPassword)
-      .then(() => {
-        Alert.alert("Thành công", "Tài khoản đã được tạo.");
-      })
-      .catch((error) => {
-        Alert.alert("Lỗi đăng ký", error.message);
+    try {
+      // ✅ 1. Tạo tài khoản trong Firebase Auth
+      const userCredential = await createUserWithEmailAndPassword(
+        auth,
+        trimmedEmail,
+        trimmedPassword
+      );
+      const user = userCredential.user;
+
+      // ✅ 2. Tạo document Firestore users/{uid}
+      await setDoc(doc(db, "users", user.uid), {
+        name: "Người dùng mới",
+        username: "@" + trimmedEmail.split("@")[0],
+        avatar: "https://i.imgur.com/abcd123.jpg",
+        bio: "Chào mừng đến với CheckinPhoto!",
+        location: "Việt Nam",
+        followers: 0,
+        following: 0,
+        likeCount: 0,
+        postCount: 0,
+        createdAt: new Date(),
       });
+
+      Alert.alert("Thành công", "Tài khoản đã được tạo.");
+      navigation.replace("Main"); // ✅ sang trang chính sau khi tạo
+    } catch (error) {
+      Alert.alert("Lỗi đăng ký", error.message);
+    }
   };
 
   return (

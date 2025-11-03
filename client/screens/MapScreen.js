@@ -1,120 +1,155 @@
 import React, { useEffect, useState } from "react";
-import { View, Text, Image, StyleSheet, TextInput, ScrollView } from "react-native";
-import MapView, { Marker, Callout } from "react-native-maps";
-
-const rawUserList = [
-  {
-    id: "u1",
-    name: "Nguyễn Văn A",
-    avatar: "https://randomuser.me/api/portraits/men/32.jpg",
-    postCount: 3,
-    photo: "https://i.imgur.com/efgh456.jpg",
-    location: "Hoàn Kiếm",
-    latitude: 21.0285,
-    longitude: 105.8542,
-  },
-  {
-    id: "u2",
-    name: "Trần Thị B",
-    avatar: "https://randomuser.me/api/portraits/women/65.jpg",
-    postCount: 5,
-    photo: "https://i.imgur.com/ghij789.jpg",
-    location: "Ba Đình",
-    latitude: 21.0330,
-    longitude: 105.8380,
-  },
-  {
-    id: "u3",
-    name: "Lê Văn C",
-    avatar: "https://randomuser.me/api/portraits/men/45.jpg",
-    postCount: 4,
-    photo: "https://i.imgur.com/ghij789.jpg",
-    location: "Ba Đình",
-    latitude: 21.0250,
-    longitude: 105.8380,
-  },
-  
-  {
-    id: "u4",
-    name: "Phạm Thị D",
-    avatar: "https://randomuser.me/api/portraits/women/12.jpg",
-    postCount: 4,
-    photo: "https://i.imgur.com/ghij789.jpg",
-    location: "Cầu Giấy",
-    latitude: 21.0250,
-    longitude: 105.7913,
-  },
-  {
-    id: "u5",
-    name: "Nguyễn Văn E",
-    avatar: "https://randomuser.me/api/portraits/men/33.jpg",
-    postCount: 4,
-    photo: "https://i.imgur.com/ghij789.jpg",
-    location: "Cầu Giấy",
-    latitude: 21.0200,
-    longitude: 105.7933,
-  },
-  {
-    id: "u6",
-    name: "Trần Thị F",
-    avatar: "https://randomuser.me/api/portraits/women/66.jpg",
-    postCount: 3,
-    photo: "https://i.imgur.com/efgh456.jpg",
-    location: "Hoàn Kiếm",
-    latitude: 21.0205,
-    longitude: 105.8541,
-  },
-  {
-  id: "u7",
-  name: "Nguyễn Văn G",
-  avatar: "https://randomuser.me/api/portraits/men/50.jpg",
-  postCount: 3,
-  photo: "https://i.imgur.com/abcd123.jpg",
-  location: "Cầu Giấy",
-  latitude: 21.0309,
-  longitude: 105.8013,
-},
-{
-  id: "u8",
-  name: "Lê Văn H",
-  avatar: "https://randomuser.me/api/portraits/men/51.jpg",
-  postCount: 2,
-  photo: "https://i.imgur.com/efgh456.jpg",
-  location: "Kim Mã",
-  latitude: 21.0310,
-  longitude: 105.8265,
-},
-{
-  id: "u9",
-  name: "Phạm Thị I",
-  avatar: "https://randomuser.me/api/portraits/women/33.jpg",
-  postCount: 4,
-  photo: "https://i.imgur.com/ghij789.jpg",
-  location: "Kim Mã",
-  latitude: 21.0295,
-  longitude: 105.8235,
-},
-  
- 
-];
+import {
+  View,
+  Text,
+  Image,
+  StyleSheet,
+  TextInput,
+  ScrollView,
+  Modal,
+  TouchableOpacity,
+  ActivityIndicator,
+} from "react-native";
+import MapView, { Marker } from "react-native-maps";
+import { collection, onSnapshot } from "firebase/firestore";
+import { db } from "../firebaseConfig";
 
 export default function MapScreen() {
   const [users, setUsers] = useState([]);
   const [search, setSearch] = useState("");
   const [filterLocation, setFilterLocation] = useState("");
+  const [selectedUser, setSelectedUser] = useState(null);
+  const [isModalVisible, setModalVisible] = useState(false);
+  const [followedUsers, setFollowedUsers] = useState([]);
+  const [loading, setLoading] = useState(true);
+async function seedFakeUsers() {
+  const fakeUsers = [
+    {
+      id: "test1",
+      name: "Nguyễn Minh An",
+      username: "@an123",
+      avatar: "https://i.imgur.com/Qr6YFvH.jpg",
+      bio: "Yêu du lịch và chụp ảnh.",
+      latitude: 21.0356,
+      longitude: 105.8302,
+      location: "Hoàn Kiếm",
+      postCount: 15,
+      likeCount: 240,
+      followers: 530,
+      photo: "https://i.imgur.com/8NQ6Hpe.jpg",
+    },
+    {
+      id: "test2",
+      name: "Lê Thảo Vy",
+      username: "@vyxinh",
+      avatar: "https://i.imgur.com/NY5U9po.jpg",
+      bio: "Food Blogger sống tại Hà Nội 🍜",
+      latitude: 21.0285,
+      longitude: 105.8412,
+      location: "Ba Đình",
+      postCount: 20,
+      likeCount: 400,
+      followers: 800,
+      photo: "https://i.imgur.com/pQOa0qG.jpg",
+    },
+    {
+      id: "test3",
+      name: "Phạm Đức Long",
+      username: "@longdev",
+      avatar: "https://i.imgur.com/M9zOeY1.jpg",
+      bio: "Lập trình viên thích check-in 😎",
+      latitude: 21.0205,
+      longitude: 105.8504,
+      location: "Cầu Giấy",
+      postCount: 10,
+      likeCount: 180,
+      followers: 200,
+      photo: "https://i.imgur.com/G1pW5FJ.jpg",
+    },
+    {
+      id: "test4",
+      name: "Trần Khánh Ly",
+      username: "@khanhly",
+      avatar: "https://i.imgur.com/ExbWjJX.jpg",
+      bio: "Thích cà phê sáng ☕ và sách.",
+      latitude: 21.0461,
+      longitude: 105.8309,
+      location: "Kim Mã",
+      postCount: 8,
+      likeCount: 130,
+      followers: 170,
+      photo: "https://i.imgur.com/WBQ0f3U.jpg",
+    },
+    {
+      id: "test5",
+      name: "Hoàng Gia Bảo",
+      username: "@hoangbao",
+      avatar: "https://i.imgur.com/OP7WzVx.jpg",
+      bio: "Designer trẻ, mê phong cảnh 🎨",
+      latitude: 21.0377,
+      longitude: 105.8534,
+      location: "Hoàn Kiếm",
+      postCount: 25,
+      likeCount: 560,
+      followers: 940,
+      photo: "https://i.imgur.com/nL5lSgT.jpg",
+    },
+  ];
 
+  for (const u of fakeUsers) {
+    await setDoc(doc(db, "users", u.id), u);
+    console.log("✅ Added:", u.name);
+  }
+}
+  // Realtime listener
   useEffect(() => {
-    setUsers(rawUserList);
+    seedFakeUsers();
+    const unsubscribe = onSnapshot(
+      collection(db, "users"),
+      (snapshot) => {
+        const userList = snapshot.docs.map((doc) => ({
+          id: doc.id,
+          ...doc.data(),
+        }));
+        setUsers(userList);
+        setLoading(false);
+      },
+      (error) => {
+        console.error("Lỗi khi lấy dữ liệu người dùng:", error);
+        setLoading(false);
+      }
+    );
+
+    return () => unsubscribe(); // 🔥 Hủy listener khi rời khỏi màn hình
   }, []);
 
+  // ✅ Bộ lọc tìm kiếm
   const filteredUsers = users.filter((user) => {
-    const matchName = user.name.toLowerCase().includes(search.toLowerCase());
-    const matchLocation = filterLocation ? user.location === filterLocation : true;
+    const matchName = user.name?.toLowerCase().includes(search.toLowerCase());
+    const matchLocation = filterLocation
+      ? user.location === filterLocation
+      : true;
     return matchName && matchLocation;
   });
 
+  const handleFollow = (userId) => {
+    if (!followedUsers.includes(userId)) {
+      setFollowedUsers([...followedUsers, userId]);
+    }
+  };
+
+  if (loading) {
+    return (
+      <View style={styles.centered}>
+        <ActivityIndicator size="large" color="#2196F3" />
+        <Text style={{ marginTop: 8 }}>Đang tải vị trí người dùng...</Text>
+      </View>
+    );
+  }
+
   return (
     <View style={{ flex: 1 }}>
+      {/* Thanh tìm kiếm */}
       <View style={styles.searchBar}>
         <TextInput
           placeholder="🔍 Tìm kiếm người dùng..."
@@ -122,7 +157,11 @@ export default function MapScreen() {
           onChangeText={setSearch}
           style={styles.input}
         />
-        <ScrollView horizontal showsHorizontalScrollIndicator={false} style={styles.filterRow}>
+        <ScrollView
+          horizontal
+          showsHorizontalScrollIndicator={false}
+          style={styles.filterRow}
+        >
           {["", "Hoàn Kiếm", "Ba Đình", "Cầu Giấy", "Kim Mã"].map((loc) => (
             <Text
               key={loc}
@@ -138,39 +177,89 @@ export default function MapScreen() {
         </ScrollView>
       </View>
 
+      {/* Bản đồ */}
       <MapView
         style={{ flex: 1 }}
         initialRegion={{
           latitude: 21.0285,
           longitude: 105.8542,
-          latitudeDelta: 0.03,
-          longitudeDelta: 0.03,
+          latitudeDelta: 0.08,
+          longitudeDelta: 0.08,
         }}
       >
-        {filteredUsers.map((user) => (
-          <Marker
-            key={user.id}
-            coordinate={{ latitude: user.latitude, longitude: user.longitude }}
-          >
-            <Image source={{ uri: user.avatar }} style={styles.avatar} />
-            <Callout>
-              <View style={styles.callout}>
-                <Text style={styles.username}>{user.name}</Text>
-                <Image source={{ uri: user.photo }} style={styles.photo} />
-                <Text>Số bài đăng: {user.postCount}</Text>
-                <Text>Khu vực: {user.location}</Text>
-              </View>
-            </Callout>
-          </Marker>
-        ))}
+        {filteredUsers.map((user) => {
+          if (!user.latitude || !user.longitude) return null;
+          return (
+            <Marker
+              key={user.id}
+              coordinate={{
+                latitude: user.latitude,
+                longitude: user.longitude,
+              }}
+              onPress={() => {
+                setSelectedUser(user);
+                setModalVisible(true);
+              }}
+            >
+              <Image source={{ uri: user.avatar }} style={styles.avatar} />
+            </Marker>
+          );
+        })}
       </MapView>
+
+      {/* Modal hiển thị thông tin người dùng */}
+      <Modal visible={isModalVisible} transparent animationType="slide">
+        <View style={styles.modalContainer}>
+          <View style={styles.modalContent}>
+            {selectedUser && (
+              <>
+                <Image
+                  source={{ uri: selectedUser.avatar }}
+                  style={styles.modalAvatar}
+                />
+                <Text style={styles.modalName}>{selectedUser.name}</Text>
+                <Text>Khu vực: {selectedUser.location}</Text>
+                <Text>Số bài đăng: {selectedUser.postCount}</Text>
+                {selectedUser.photo && (
+                  <Image
+                    source={{ uri: selectedUser.photo }}
+                    style={styles.modalPhoto}
+                  />
+                )}
+                <TouchableOpacity
+                  style={[
+                    styles.followButton,
+                    followedUsers.includes(selectedUser.id) && styles.followed,
+                  ]}
+                  onPress={() => handleFollow(selectedUser.id)}
+                >
+                  <Text style={styles.followText}>
+                    {followedUsers.includes(selectedUser.id)
+                      ? "Đã follow"
+                      : "Follow"}
+                  </Text>
+                </TouchableOpacity>
+                <TouchableOpacity onPress={() => setModalVisible(false)}>
+                  <Text style={styles.closeText}>Đóng</Text>
+                </TouchableOpacity>
+              </>
+            )}
+          </View>
+        </View>
+      </Modal>
     </View>
   );
 }
 
+/* ==================== STYLE ==================== */
 const styles = StyleSheet.create({
+  centered: {
+    flex: 1,
+    justifyContent: "center",
+    alignItems: "center",
+  },
   searchBar: {
-    marginTop: 25,
+    paddingTop: 40,
     padding: 10,
     backgroundColor: "#fff",
     elevation: 2,
@@ -197,24 +286,58 @@ const styles = StyleSheet.create({
     color: "#fff",
   },
   avatar: {
-    width: 34,
-    height: 34,
+    width: 40,
+    height: 40,
     borderRadius: 20,
     borderWidth: 2,
     borderColor: "#fff",
   },
-  callout: {
-    width: 200,
-    padding: 5,
+  modalContainer: {
+    flex: 1,
+    backgroundColor: "rgba(0,0,0,0.5)",
+    justifyContent: "center",
+    alignItems: "center",
   },
-  username: {
+  modalContent: {
+    backgroundColor: "#fff",
+    padding: 20,
+    borderRadius: 12,
+    width: "80%",
+    alignItems: "center",
+  },
+  modalAvatar: {
+    width: 80,
+    height: 80,
+    borderRadius: 40,
+    marginBottom: 10,
+  },
+  modalName: {
+    fontSize: 18,
     fontWeight: "bold",
-    marginBottom: 5,
+    marginBottom: 6,
   },
-  photo: {
+  modalPhoto: {
     width: "100%",
-    height: 100,
+    height: 120,
     borderRadius: 8,
-    marginBottom: 5,
+    marginVertical: 10,
+  },
+  followButton: {
+    backgroundColor: "#2196F3",
+    paddingVertical: 8,
+    paddingHorizontal: 20,
+    borderRadius: 20,
+    marginBottom: 10,
+  },
+  followed: {
+    backgroundColor: "#aaa",
+  },
+  followText: {
+    color: "#fff",
+    fontWeight: "bold",
+  },
+  closeText: {
+    color: "#2196F3",
+    marginTop: 10,
   },
 });
