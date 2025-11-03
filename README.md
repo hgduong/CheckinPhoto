@@ -1,90 +1,339 @@
-# CheckinPhoto
+# 📸 CheckinPhoto
 
-This repository contains a React Native (Expo) client and a Node.js + Express backend for a photo check-in / sharing app.
+Ứng dụng check-in và chia sẻ ảnh với tích hợp AI phân tích ảnh và định vị địa lý.
 
-cd E:\SWDPT\CheckinPhoto\client
-npx expo start
+## 🌟 Tính năng
 
-cd E:\SWDPT\CheckinPhoto\backend
+- **📷 Camera**: Chụp ảnh với tự động gắn thẻ vị trí
+- **🤖 AI Analysis**: Sử dụng Google Gemini để phân tích ảnh và gợi ý mô tả
+- **📍 Location Services**: Tích hợp Google Maps để chuyển đổi tọa độ thành địa chỉ
+- **🖼️ Gallery**: Xem ảnh đã lưu, nhóm theo khu vực
+- **🗺️ Map View**: Hiển thị vị trí người dùng và bài đăng trên bản đồ
+- **💾 Offline Support**: Lưu ảnh local, hoạt động cả khi không có mạng
+
+## 🛠️ Tech Stack
+
+### Frontend (Client)
+- React Native (Expo SDK 54)
+- React Navigation
+- Expo Camera, Location, MediaLibrary
+- AsyncStorage cho offline storage
+
+### Backend (Server)
+- Node.js + Express
+- MongoDB + Mongoose
+- Multer (file uploads)
+- Google Maps Geocoding API
+- Google Gemini AI API
+
+## 📋 Yêu cầu hệ thống
+
+- Node.js >= 16.x
+- npm hoặc yarn
+- MongoDB (local hoặc MongoDB Atlas)
+- Expo CLI: `npm install -g expo-cli`
+- Android Studio / Xcode (cho emulator) hoặc Expo Go app
+
+## 🚀 Hướng dẫn cài đặt
+
+### 1. Clone repository
+
+```bash
+git clone <repository-url>
+cd CheckinPhoto
+```
+
+### 2. Cài đặt Backend
+
+```bash
+cd backend
+npm install
+```
+
+Tạo file `.env` trong thư mục `backend/`:
+
+```bash
+cp .env.example .env
+```
+
+Chỉnh sửa file `.env` với thông tin của bạn:
+
+```env
+MONGO_URI=mongodb://localhost:27017/checkinphoto
+GOOGLE_MAPS_API_KEY=your_google_maps_api_key_here
+GEMINI_API_KEY=your_gemini_api_key_here
+PORT=9999
+NODE_ENV=development
+```
+
+### 3. Cài đặt Client
+
+```bash
+cd ../client
+npm install
+```
+
+Chỉnh sửa file `client/config.js`:
+
+```javascript
+const DEV_CONFIG = {
+  // Thay đổi IP này khi test trên thiết bị thật
+  API_BASE_URL: 'http://localhost:9999/api',
+  // API_BASE_URL: 'http://192.168.1.100:9999/api', // Ví dụ cho thiết bị thật
+  TIMEOUT: 30000,
+  OFFLINE_MODE: false,
+};
+```
+
+## ▶️ Chạy ứng dụng
+
+### Khởi động Backend
+
+```bash
+cd backend
+npm run dev
+# hoặc
 node server.js
-# hoặc nếu có script npm start trong backend/package.json:
-npm start
+```
 
-Overview of added features in this change:
-- Camera preview modal with Save / Edit / Upload / Share / Retake actions (client).
-- Gallery grouped by region and preview/edit/upload features (client).
-- Backend endpoints:
-	- POST /api/analyze  -> accept { latitude, longitude, imageUri } and return Google Geocoding address and AI analysis (Gemini) results.
-	- POST /api/upload   -> accept multipart/form-data to save posts (stores image to backend/uploads and saves to MongoDB `CardPost`).
+Server sẽ chạy tại: `http://localhost:9999`
 
-Required API keys (place these in `backend/.env`):
+### Khởi động Client
 
-- GOOGLE_MAPS_API_KEY=your_google_maps_geocoding_api_key
-	- Used by backend `/api/analyze` to reverse-geocode coordinates into city/district and formatted address.
-	- You can obtain it from https://console.cloud.google.com/apis/credentials — enable "Geocoding API" (Maps JavaScript/Geocoding).
+```bash
+cd client
+npx expo start
+```
 
-- GEMINI_API_KEY=your_gemini_api_key
-	- Used by backend `services/aiService.js` to call Gemini (Google Generative AI). The current `aiService` implementation expects an image URL (publicly accessible) or suitable input the Gemini vision model accepts. If you want Gemini to analyze local files, upload them to public storage (e.g., Google Cloud Storage) first and pass that URL.
-	- See https://cloud.google.com/generative-ai for API docs and authentication instructions.
+Sau đó:
+- Nhấn `a` để mở Android emulator
+- Nhấn `i` để mở iOS simulator
+- Quét QR code bằng Expo Go app trên điện thoại
 
-How the flow works (client):
-1. User opens Camera screen and takes a photo.
-2. App tries to get device location (best-effort). If location is available, the client calls `POST /api/analyze` with { latitude, longitude, imageUri } (imageUri should be a public URL if you want Gemini to analyze the image).
-3. Backend returns:
-	 - `address`: { formatted, city, district } resolved via Google Maps Geocoding API.
-	 - `ai`: object returned by `aiService.analyzeImage(...)` if `GEMINI_API_KEY` is configured.
-4. The client displays AI description and the city/district to the user in the preview modal. The user can edit the suggestions.
-5. When the user taps Save or Upload, the client uploads the image and metadata to `POST /api/upload` (multipart/form-data). The backend saves the image under `backend/uploads` and stores a `CardPost` document in MongoDB including location, aiDescription, and address data.
+## 🔑 Lấy API Keys
 
-Notes & limitations / configuration you must do:
+### Google Maps API Key
 
-- Gemini image analysis requires the model to access the image. For simplicity, the current implementation expects an `imageUri` accessible by Gemini (public URL). If you want to send local images, you should:
-	- Upload the image to a public storage (GCS, S3) first and pass the public URL to `/api/analyze`, or
-	- Update `backend/services/aiService.js` to send image bytes using the Gemini Vision API (follow the official docs for binary upload), or
-	- Use a third-party image-hosting service.
+1. Truy cập [Google Cloud Console](https://console.cloud.google.com/)
+2. Tạo project mới hoặc chọn project có sẵn
+3. Bật **Geocoding API**
+4. Vào **Credentials** → **Create Credentials** → **API Key**
+5. Copy API key và paste vào file `.env`
 
-- On Android devices, Expo Go has restrictions for full media library write access; create a development build to test saving photos and metadata reliably.
+### Google Gemini API Key
 
-- Backend environment & dependencies:
-	- Create a `.env` file in `backend/` with:
-		- MONGO_URI=your_mongo_connection_string
-		- GOOGLE_MAPS_API_KEY=...
-		- GEMINI_API_KEY=...
-	- Install backend dependencies:
-		cd backend
-		npm install express mongoose multer axios @google/generative-ai
+1. Truy cập [Google AI Studio](https://makersuite.google.com/app/apikey)
+2. Đăng nhập với Google account
+3. Click **Get API Key** → **Create API key**
+4. Copy API key và paste vào file `.env`
 
-- Client configuration & dependencies:
-	- `client/app.json` has been updated to include plugin/permissions for camera, media library and location.
-	- Install client dependencies (in client/):
-		npm install
-		npx expo install expo-camera expo-media-library expo-image-picker expo-location @expo/vector-icons expo-font
+### MongoDB
 
-Endpoints summary
+**Option 1: MongoDB Local**
+```bash
+# Cài đặt MongoDB Community Edition
+# Windows: https://www.mongodb.com/try/download/community
+# Mac: brew install mongodb-community
+# Linux: sudo apt-get install mongodb
 
-- POST /api/analyze
-	- Request body (JSON): { latitude: number, longitude: number, imageUri?: string }
-	- Response: { address?: { formatted, city, district }, ai?: {...} }
+# Khởi động MongoDB
+mongod
+```
 
-- POST /api/upload
-	- Request: multipart/form-data fields: `image` (file), `title`, `description`, `location` (JSON string), `aiDescription`
-	- Response: saved post document
+**Option 2: MongoDB Atlas (Cloud - Miễn phí)**
+1. Truy cập [MongoDB Atlas](https://www.mongodb.com/cloud/atlas)
+2. Tạo tài khoản miễn phí
+3. Tạo cluster mới (chọn Free tier)
+4. Lấy connection string và paste vào `.env`
 
-Where to edit API keys
-- Backend `.env` in `backend/` (create if missing). Example:
+## 📱 API Endpoints
 
-	MONGO_URI=mongodb://localhost:27017/checkinphoto
-	GOOGLE_MAPS_API_KEY=YOUR_GOOGLE_MAPS_KEY_HERE
-	GEMINI_API_KEY=YOUR_GEMINI_KEY_HERE
+### POST `/api/analyze`
+Phân tích ảnh với AI và geocoding
 
-After editing `.env`, restart the backend server:
+**Request:**
+```json
+{
+  "latitude": 21.0285,
+  "longitude": 105.8542,
+  "imageUri": "data:image/jpeg;base64,..."
+}
+```
 
-	cd backend
-	npm start
+**Response:**
+```json
+{
+  "address": {
+    "formatted": "Hoàn Kiếm, Hà Nội, Vietnam",
+    "city": "Hà Nội",
+    "district": "Hoàn Kiếm",
+    "country": "Vietnam"
+  },
+  "ai": {
+    "aiDescription": "Hồ Hoàn Kiếm - Biểu tượng của Hà Nội...",
+    "similarPlaces": [...],
+    "fullText": "..."
+  }
+}
+```
 
-If you'd like, I can:
-- Wire uploading to a cloud storage bucket (GCS) so AI can access images by URL automatically.
-- Update `aiService.js` to accept base64/image bytes and call Gemini Vision properly.
-- Add address fields into the saved `CardPost` document (right now `CardPost` stores location and aiDescription; we can extend it to store `address` explicitly).
+### POST `/api/upload`
+Upload ảnh và metadata lên server
 
-If you want me to implement any of the above extra steps, tell me which one and I'll continue.
+**Request:** `multipart/form-data`
+- `image`: File ảnh
+- `title`: Tiêu đề
+- `description`: Mô tả
+- `location`: JSON string `{"type":"Point","coordinates":[lng,lat]}`
+- `aiDescription`: Mô tả từ AI
+- `authorName`: Tên tác giả
+- `authorAvatar`: URL avatar
+
+**Response:**
+```json
+{
+  "success": true,
+  "message": "Upload successful",
+  "post": { ... }
+}
+```
+
+### GET `/api/posts`
+Lấy danh sách posts
+
+**Query params:**
+- `limit`: Số lượng posts (default: 50)
+- `skip`: Bỏ qua n posts đầu (default: 0)
+
+**Response:**
+```json
+{
+  "success": true,
+  "count": 10,
+  "posts": [...]
+}
+```
+
+## 🎯 Luồng hoạt động
+
+1. **Chụp ảnh**: Người dùng mở Camera và chụp ảnh
+2. **Lấy vị trí**: App tự động lấy GPS coordinates
+3. **Phân tích**:
+   - Gửi ảnh (base64) + tọa độ lên backend
+   - Backend gọi Google Maps API để lấy địa chỉ
+   - Backend gọi Gemini AI để phân tích ảnh
+4. **Hiển thị**: App hiển thị gợi ý AI và địa chỉ
+5. **Chỉnh sửa**: Người dùng có thể chỉnh sửa caption
+6. **Lưu**:
+   - Lưu local vào AsyncStorage (offline)
+   - Hoặc upload lên server (online)
+
+## 🔧 Cấu hình nâng cao
+
+### Chạy trên thiết bị thật
+
+1. Tìm IP máy tính:
+   - **Windows**: `ipconfig` → tìm IPv4 Address
+   - **Mac/Linux**: `ifconfig` → tìm inet
+
+2. Cập nhật `client/config.js`:
+```javascript
+API_BASE_URL: 'http://192.168.1.100:9999/api', // Thay bằng IP của bạn
+```
+
+3. Đảm bảo điện thoại và máy tính cùng mạng WiFi
+
+### Chế độ Offline
+
+Để chạy app hoàn toàn offline (không cần backend):
+
+```javascript
+// client/config.js
+const DEV_CONFIG = {
+  API_BASE_URL: 'http://localhost:9999/api',
+  TIMEOUT: 30000,
+  OFFLINE_MODE: true, // Bật chế độ offline
+};
+```
+
+## 🐛 Troubleshooting
+
+### Lỗi "Network request failed"
+- Kiểm tra backend đã chạy chưa
+- Kiểm tra IP trong `config.js` đúng chưa
+- Kiểm tra firewall có chặn port 9999 không
+
+### Lỗi "MONGO_URI not set"
+- Tạo file `.env` trong thư mục `backend/`
+- Copy nội dung từ `.env.example`
+- Điền đúng MongoDB connection string
+
+### Lỗi Camera/Location permissions
+- Chạy lại app và cho phép permissions
+- Trên iOS: Settings → App → Permissions
+- Trên Android: Settings → Apps → Permissions
+
+### Gemini AI không hoạt động
+- Kiểm tra `GEMINI_API_KEY` trong `.env`
+- Model mới: `gemini-1.5-flash` (đã cập nhật)
+- Kiểm tra quota API key tại [Google AI Studio](https://makersuite.google.com/)
+
+## 📂 Cấu trúc thư mục
+
+```
+CheckinPhoto/
+├── backend/
+│   ├── config/
+│   │   └── db.js              # MongoDB connection
+│   ├── models/
+│   │   └── CardPost.model.js  # Post schema
+│   ├── routes/
+│   │   └── gallery.js         # API routes
+│   ├── services/
+│   │   └── aiService.js       # Gemini AI integration
+│   ├── uploads/               # Uploaded images
+│   ├── .env.example           # Environment template
+│   ├── server.js              # Express server
+│   └── package.json
+│
+├── client/
+│   ├── assets/                # Images, icons
+│   ├── navigation/
+│   │   ├── BottomTabs.js      # Tab navigation
+│   │   └── CameraStack.js     # Camera stack
+│   ├── screens/
+│   │   ├── CameraScreen.js    # Camera
+│   │   ├── CreateCaptionScreen.js  # Caption editor
+│   │   ├── GalleryScreen.js   # Photo gallery
+│   │   ├── HomeScreen.js      # Home feed
+│   │   ├── MapScreen.js       # Map view
+│   │   └── ProfileScreen.js   # User profile
+│   ├── utils/
+│   │   └── api.js             # API utilities
+│   ├── config.js              # App configuration
+│   ├── App.js                 # Root component
+│   └── package.json
+│
+└── README.md
+```
+
+## 🤝 Đóng góp
+
+Mọi đóng góp đều được chào đón! Vui lòng:
+1. Fork repository
+2. Tạo branch mới (`git checkout -b feature/AmazingFeature`)
+3. Commit changes (`git commit -m 'Add some AmazingFeature'`)
+4. Push to branch (`git push origin feature/AmazingFeature`)
+5. Mở Pull Request
+
+## 📄 License
+
+MIT License - xem file LICENSE để biết thêm chi tiết
+
+## 📞 Liên hệ
+
+Nếu có vấn đề hoặc câu hỏi, vui lòng tạo issue trên GitHub.
+
+---
+
+**Made with ❤️ using React Native & Node.js**
