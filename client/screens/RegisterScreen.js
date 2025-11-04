@@ -8,8 +8,8 @@ import {
   Alert,
 } from "react-native";
 import { createUserWithEmailAndPassword } from "firebase/auth";
-import { auth, db } from "../firebaseConfig"; // ✅ import db
-import { doc, setDoc } from "firebase/firestore"; // ✅ thêm Firestore
+import { auth, db } from "../firebaseConfig"; // import db
+import { doc, setDoc } from "firebase/firestore"; // thêm Firestore
 
 export default function RegisterScreen({ navigation }) {
   const [email, setEmail] = useState("");
@@ -42,7 +42,7 @@ export default function RegisterScreen({ navigation }) {
     }
 
     try {
-      // ✅ 1. Tạo tài khoản trong Firebase Auth
+      // 1. Tạo tài khoản trong Firebase Auth
       const userCredential = await createUserWithEmailAndPassword(
         auth,
         trimmedEmail,
@@ -50,11 +50,11 @@ export default function RegisterScreen({ navigation }) {
       );
       const user = userCredential.user;
 
-      // ✅ 2. Tạo document Firestore users/{uid}
+      // 2. Tạo document Firestore users/{uid}
       await setDoc(doc(db, "users", user.uid), {
         name: "Người dùng mới",
         username: "@" + trimmedEmail.split("@")[0],
-        avatar: "https://i.imgur.com/abcd123.jpg",
+        avatar: "https://encrypted-tbn0.gstatic.com/images?q=tbn:ANd9GcSZ67WnVe0-3PrCFinHDd58Jm--CH0NyPOIuP0RS0uygOo4RYHO_lP6tVoIegZWwNXRXpc&usqp=CAU",
         bio: "Chào mừng đến với CheckinPhoto!",
         location: "Việt Nam",
         followers: 0,
@@ -65,7 +65,7 @@ export default function RegisterScreen({ navigation }) {
       });
 
       Alert.alert("Thành công", "Tài khoản đã được tạo.");
-      navigation.replace("Main"); // ✅ sang trang chính sau khi tạo
+      navigation.replace("Main");
     } catch (error) {
       Alert.alert("Lỗi đăng ký", error.message);
     }

@@ -11,8 +11,16 @@ import {
   ActivityIndicator,
 } from "react-native";
 import MapView, { Marker } from "react-native-maps";
-import { collection, onSnapshot } from "firebase/firestore";
-import { db } from "../firebaseConfig";
+import {
+  collection,
+  onSnapshot,
+  doc,
+  updateDoc,
+  getDoc,
+  arrayUnion,
+  arrayRemove,
+} from "firebase/firestore";
+import { db, auth } from "../firebaseConfig";
 
 export default function MapScreen() {
   const [users, setUsers] = useState([]);
@@ -22,88 +30,29 @@ export default function MapScreen() {
   const [isModalVisible, setModalVisible] = useState(false);
   const [followedUsers, setFollowedUsers] = useState([]);
   const [loading, setLoading] = useState(true);
-async function seedFakeUsers() {
-  const fakeUsers = [
-    {
-      id: "test1",
-      name: "Nguyễn Minh An",
-      username: "@an123",
-      avatar: "https://i.imgur.com/Qr6YFvH.jpg",
-      bio: "Yêu du lịch và chụp ảnh.",
-      latitude: 21.0356,
-      longitude: 105.8302,
-      location: "Hoàn Kiếm",
-      postCount: 15,
-      likeCount: 240,
-      followers: 530,
-      photo: "https://i.imgur.com/8NQ6Hpe.jpg",
-    },
-    {
-      id: "test2",
-      name: "Lê Thảo Vy",
-      username: "@vyxinh",
-      avatar: "https://i.imgur.com/NY5U9po.jpg",
-      bio: "Food Blogger sống tại Hà Nội 🍜",
-      latitude: 21.0285,
-      longitude: 105.8412,
-      location: "Ba Đình",
-      postCount: 20,
-      likeCount: 400,
-      followers: 800,
-      photo: "https://i.imgur.com/pQOa0qG.jpg",
-    },
-    {
-      id: "test3",
-      name: "Phạm Đức Long",
-      username: "@longdev",
-      avatar: "https://i.imgur.com/M9zOeY1.jpg",
-      bio: "Lập trình viên thích check-in 😎",
-      latitude: 21.0205,
-      longitude: 105.8504,
-      location: "Cầu Giấy",
-      postCount: 10,
-      likeCount: 180,
-      followers: 200,
-      photo: "https://i.imgur.com/G1pW5FJ.jpg",
-    },
-    {
-      id: "test4",
-      name: "Trần Khánh Ly",
-      username: "@khanhly",
-      avatar: "https://i.imgur.com/ExbWjJX.jpg",
-      bio: "Thích cà phê sáng ☕ và sách.",
-      latitude: 21.0461,
-      longitude: 105.8309,
-      location: "Kim Mã",
-      postCount: 8,
-      likeCount: 130,
-      followers: 170,
-      photo: "https://i.imgur.com/WBQ0f3U.jpg",
-    },
-    {
-      id: "test5",
-      name: "Hoàng Gia Bảo",
-      username: "@hoangbao",
-      avatar: "https://i.imgur.com/OP7WzVx.jpg",
-      bio: "Designer trẻ, mê phong cảnh 🎨",
-      latitude: 21.0377,
-      longitude: 105.8534,
-      location: "Hoàn Kiếm",
-      postCount: 25,
-      likeCount: 560,
-      followers: 940,
-      photo: "https://i.imgur.com/nL5lSgT.jpg",
-    },
-  ];
+  const [currentUid, setCurrentUid] = useState(null);
 
-  for (const u of fakeUsers) {
-    await setDoc(doc(db, "users", u.id), u);
-    console.log("✅ Added:", u.name);
-  }
-}
-  // Realtime listener
+  // ✅ Lấy user hiện tại & theo dõi realtime following list
   useEffect(() => {
-    seedFakeUsers();
+    const unsub = auth.onAuthStateChanged((user) => {
+      if (user) {
+        setCurrentUid(user.uid);
+
+        // Nghe realtime danh sách following của user hiện tại
+        const followUnsub = onSnapshot(doc(db, "users", user.uid), (snap) => {
+          if (snap.exists()) {
+            setFollowedUsers(snap.data().following || []);
+          }
+        });
+
+        return followUnsub;
+      }
+    });
+    return unsub;
+  }, []);
+
+  // ✅ Lắng nghe realtime danh sách users
+  useEffect(() => {
     const unsubscribe = onSnapshot(
       collection(db, "users"),
       (snapshot) => {
@@ -120,8 +69,55 @@ async function seedFakeUsers() {
       }
     );
 
-    return () => unsubscribe(); // 🔥 Hủy listener khi rời khỏi màn hình
+    return () => unsubscribe();
   }, []);
+
+  // ✅ Follow/Unfollow (đồng bộ Firestore)
+  const handleFollow = async (targetId) => {
+    if (targetId === currentUid) return; // Không follow chính mình
+    try {
+      const currentRef = doc(db, "users", currentUid);
+      const targetRef = doc(db, "users", targetId);
+
+      const currentSnap = await getDoc(currentRef);
+      const targetSnap = await getDoc(targetRef);
+      if (!currentSnap.exists() || !targetSnap.exists()) return;
+
+      const currentFollowing = currentSnap.data().following || [];
+      const isFollowed = currentFollowing.includes(targetId);
+
+      if (isFollowed) {
+        // ❌ Bỏ follow
+        await updateDoc(currentRef, {
+          following: arrayRemove(targetId),
+        });
+        await updateDoc(targetRef, {
+          followers: Math.max((targetSnap.data().followers || 1) - 1, 0),
+        });
+        console.log(`👋 Unfollowed user ${targetId}`);
+      } else {
+        // ✅ Follow mới
+        await updateDoc(currentRef, {
+          following: arrayUnion(targetId),
+        });
+        await updateDoc(targetRef, {
+          followers: (targetSnap.data().followers || 0) + 1,
+        });
+        console.log(`⭐ Followed user ${targetId}`);
+      }
+
+      // Load lại user đang mở modal
+      const updatedSnap = await getDoc(targetRef);
+      if (updatedSnap.exists()) {
+        setSelectedUser((prev) => ({
+          ...prev,
+          followers: updatedSnap.data().followers,
+        }));
+      }
+    } catch (error) {
+      console.error("❌ Lỗi khi follow:", error);
+    }
+  };
 
   // ✅ Bộ lọc tìm kiếm
   const filteredUsers = users.filter((user) => {
@@ -131,12 +127,6 @@ async function seedFakeUsers() {
       : true;
     return matchName && matchLocation;
   });
-
-  const handleFollow = (userId) => {
-    if (!followedUsers.includes(userId)) {
-      setFollowedUsers([...followedUsers, userId]);
-    }
-  };
 
   if (loading) {
     return (
@@ -187,58 +177,75 @@ async function seedFakeUsers() {
           longitudeDelta: 0.08,
         }}
       >
-        {filteredUsers.map((user) => {
+        {filteredUsers.map((user, index) => {
           if (!user.latitude || !user.longitude) return null;
+
+          // Offset nhỏ tránh marker trùng
+          const offsetLat = (Math.random() - 0.1) * 0.0017;
+          const offsetLng = (Math.random() - 0.1) * 0.0009;
+
           return (
             <Marker
               key={user.id}
               coordinate={{
-                latitude: user.latitude,
-                longitude: user.longitude,
+                latitude: user.latitude + offsetLat,
+                longitude: user.longitude + offsetLng,
               }}
               onPress={() => {
                 setSelectedUser(user);
                 setModalVisible(true);
               }}
             >
-              <Image source={{ uri: user.avatar }} style={styles.avatar} />
+              <Image
+                source={{
+                  uri:
+                    user.avatar ||
+                    "https://cdn-icons-png.flaticon.com/512/3135/3135715.png",
+                }}
+                style={styles.avatar}
+              />
             </Marker>
           );
         })}
       </MapView>
 
-      {/* Modal hiển thị thông tin người dùng */}
+      {/* Modal thông tin người dùng */}
       <Modal visible={isModalVisible} transparent animationType="slide">
         <View style={styles.modalContainer}>
           <View style={styles.modalContent}>
             {selectedUser && (
               <>
                 <Image
-                  source={{ uri: selectedUser.avatar }}
+                  source={{
+                    uri:
+                      selectedUser.avatar ||
+                      "https://cdn-icons-png.flaticon.com/512/3135/3135715.png",
+                  }}
                   style={styles.modalAvatar}
                 />
                 <Text style={styles.modalName}>{selectedUser.name}</Text>
                 <Text>Khu vực: {selectedUser.location}</Text>
-                <Text>Số bài đăng: {selectedUser.postCount}</Text>
-                {selectedUser.photo && (
-                  <Image
-                    source={{ uri: selectedUser.photo }}
-                    style={styles.modalPhoto}
-                  />
+                <Text>Số bài đăng: {selectedUser.postCount || 0}</Text>
+                <Text>Người theo dõi: {selectedUser.followers || 0}</Text>
+
+                {/* Ẩn nút follow nếu là chính mình */}
+                {selectedUser.id !== currentUid && (
+                  <TouchableOpacity
+                    style={[
+                      styles.followButton,
+                      followedUsers.includes(selectedUser.id) &&
+                        styles.followed,
+                    ]}
+                    onPress={() => handleFollow(selectedUser.id)}
+                  >
+                    <Text style={styles.followText}>
+                      {followedUsers.includes(selectedUser.id)
+                        ? "Đã follow"
+                        : "Follow"}
+                    </Text>
+                  </TouchableOpacity>
                 )}
-                <TouchableOpacity
-                  style={[
-                    styles.followButton,
-                    followedUsers.includes(selectedUser.id) && styles.followed,
-                  ]}
-                  onPress={() => handleFollow(selectedUser.id)}
-                >
-                  <Text style={styles.followText}>
-                    {followedUsers.includes(selectedUser.id)
-                      ? "Đã follow"
-                      : "Follow"}
-                  </Text>
-                </TouchableOpacity>
+
                 <TouchableOpacity onPress={() => setModalVisible(false)}>
                   <Text style={styles.closeText}>Đóng</Text>
                 </TouchableOpacity>
@@ -270,9 +277,7 @@ const styles = StyleSheet.create({
     borderRadius: 8,
     marginBottom: 8,
   },
-  filterRow: {
-    flexDirection: "row",
-  },
+  filterRow: { flexDirection: "row" },
   filterButton: {
     paddingHorizontal: 12,
     paddingVertical: 6,
@@ -281,10 +286,7 @@ const styles = StyleSheet.create({
     marginRight: 8,
     fontSize: 14,
   },
-  activeFilter: {
-    backgroundColor: "#2196F3",
-    color: "#fff",
-  },
+  activeFilter: { backgroundColor: "#2196F3", color: "#fff" },
   avatar: {
     width: 40,
     height: 40,
@@ -311,11 +313,7 @@ const styles = StyleSheet.create({
     borderRadius: 40,
     marginBottom: 10,
   },
-  modalName: {
-    fontSize: 18,
-    fontWeight: "bold",
-    marginBottom: 6,
-  },
+  modalName: { fontSize: 18, fontWeight: "bold", marginBottom: 6 },
   modalPhoto: {
     width: "100%",
     height: 120,
@@ -329,15 +327,7 @@ const styles = StyleSheet.create({
     borderRadius: 20,
     marginBottom: 10,
   },
-  followed: {
-    backgroundColor: "#aaa",
-  },
-  followText: {
-    color: "#fff",
-    fontWeight: "bold",
-  },
-  closeText: {
-    color: "#2196F3",
-    marginTop: 10,
-  },
+  followed: { backgroundColor: "#aaa" },
+  followText: { color: "#fff", fontWeight: "bold" },
+  closeText: { color: "#2196F3", marginTop: 10 },
 });
