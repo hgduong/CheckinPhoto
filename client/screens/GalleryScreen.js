@@ -52,7 +52,7 @@ export default function GalleryScreen({ navigation }) {
       if (Array.isArray(local) && local.length > 0) {
         // derive regions from local posts
         const regionGroups = local.reduce((groups, image) => {
-          const region = image.address?.city || image.address?.region || image.region || 'Local';
+          const region = image.address?.district || image.address?.city || image.address?.region || 'Local';
           if (!groups[region]) groups[region] = [];
           groups[region].push(image);
           return groups;
@@ -109,6 +109,44 @@ export default function GalleryScreen({ navigation }) {
     Alert.alert('Upload disabled', 'This build saves photos locally. Enable backend upload in a different build.');
   };
 
+  const handleDelete = async () => {
+    Alert.alert(
+      'Xóa ảnh',
+      'Bạn có chắc muốn xóa ảnh này không? Hành động này không thể hoàn tác.',
+      [
+        { text: 'Hủy', style: 'cancel' },
+        {
+          text: 'Xóa',
+          style: 'destructive',
+          onPress: async () => {
+            try {
+              // Remove from AsyncStorage
+              const rawLocal = await AsyncStorage.getItem('LOCAL_POSTS');
+              if (rawLocal) {
+                let localPosts = JSON.parse(rawLocal);
+                localPosts = localPosts.filter(post => post.id !== selectedImage.id);
+                await AsyncStorage.setItem('LOCAL_POSTS', JSON.stringify(localPosts));
+
+                // Update local state
+                setImages(localPosts);
+
+                // Close modal
+                setModalVisible(false);
+                setSelectedImage(null);
+
+                Alert.alert('Đã xóa', 'Ảnh đã được xóa thành công.');
+              }
+            } catch (error) {
+              console.error('Error deleting image:', error);
+              Alert.alert('Lỗi', 'Không thể xóa ảnh. Vui lòng thử lại.');
+            }
+          },
+        },
+      ],
+      { cancelable: true }
+    );
+  };
+
   const renderImageItem = ({ item }) => (
     <TouchableOpacity onPress={() => handleImageSelect(item)}>
       <Image
@@ -122,10 +160,11 @@ export default function GalleryScreen({ navigation }) {
     <View style={styles.regionSection}>
       <Text style={styles.regionTitle}>{region}</Text>
       <FlatList
-        data={images.filter(img => img.region === region)}
+        data={images.filter(img => img.address?.district === region || img.address?.city === region || img.address?.region === region || (!img.address && region === 'Local'))}
         renderItem={renderImageItem}
         horizontal
         showsHorizontalScrollIndicator={false}
+        contentContainerStyle={styles.horizontalList}
       />
     </View>
   );
@@ -278,6 +317,14 @@ export default function GalleryScreen({ navigation }) {
                 <MaterialIcons name="cloud-upload" size={24} color="white" />
                 <Text style={styles.buttonText}>Upload</Text>
               </TouchableOpacity>
+
+              <TouchableOpacity
+                style={[styles.actionButton, styles.deleteButton]}
+                onPress={handleDelete}
+              >
+                <MaterialIcons name="delete" size={24} color="white" />
+                <Text style={styles.buttonText}>Delete</Text>
+              </TouchableOpacity>
             </View>
 
             <TouchableOpacity
@@ -298,6 +345,9 @@ const styles = StyleSheet.create({
     flex: 1,
     backgroundColor: '#fff',
   },
+  horizontalList: {
+    paddingHorizontal: 10,
+  },
   regionSection: {
     marginVertical: 10,
     paddingHorizontal: 10,
@@ -312,6 +362,7 @@ const styles = StyleSheet.create({
     height: 100,
     marginRight: 10,
     borderRadius: 8,
+    resizeMode: 'cover',
   },
   modalContainer: {
     flex: 1,
@@ -332,6 +383,7 @@ const styles = StyleSheet.create({
     height: 200,
     borderRadius: 10,
     marginBottom: 20,
+    resizeMode: 'contain',
   },
   suggestionsContainer: {
     width: '100%',
@@ -362,6 +414,9 @@ const styles = StyleSheet.create({
     borderRadius: 8,
     flexDirection: 'row',
     alignItems: 'center',
+  },
+  deleteButton: {
+    backgroundColor: '#dc3545',
   },
   buttonText: {
     color: 'white',

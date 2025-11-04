@@ -53,8 +53,9 @@ app.use((req, res) => {
 });
 
 const PORT = process.env.PORT || 9999;
-app.listen(PORT, () => {
+app.listen(PORT, '0.0.0.0', () => {
   console.log(`✅ Server running on port ${PORT}`);
   console.log(`📍 API: http://localhost:${PORT}/api`);
   console.log(`📁 Uploads: http://localhost:${PORT}/uploads`);
+  console.log(`🌐 Network: http://0.0.0.0:${PORT}/api`);
 });
