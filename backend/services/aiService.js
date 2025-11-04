@@ -14,8 +14,8 @@ async function analyzeImage(imageUrl) {
       throw new Error('GEMINI_API_KEY not configured');
     }
 
-    // Sử dụng model mới: gemini-1.5-flash (thay thế gemini-pro-vision đã deprecated)
-    const model = genAI.getGenerativeModel({ model: "gemini-1.5-flash" });
+    // Sử dụng model mới: gemini-2.5-flash-lite (model ổn định và nhanh)
+    const model = genAI.getGenerativeModel({ model: "gemini-2.5-flash-lite" });
 
     const prompt = `Phân tích bức ảnh này và cung cấp:
 1. Mô tả ngắn gọn về địa điểm/cảnh vật trong ảnh (1-2 câu)
