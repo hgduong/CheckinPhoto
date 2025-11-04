@@ -196,7 +196,8 @@ export default function ProfileScreen() {
 
         const list = friendDocs
           .filter((d) => d.exists())
-          .map((d) => ({ id: d.id, ...d.data() }));
+          .map((d) => ({ id: d.id, ...d.data() }))
+          .filter(user => user.id); // Ensure user has valid ID
 
         setFriends(list);
       } catch (err) {

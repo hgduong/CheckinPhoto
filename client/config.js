@@ -12,8 +12,8 @@
 // Cấu hình cho development
 const DEV_CONFIG = {
   // Thay đổi IP này thành IP máy tính của bạn khi test trên thiết bị thật
-  // API_BASE_URL: 'http://localhost:9999/api',
-  API_BASE_URL: 'http://192.168.1.100:9999/api', // Ví dụ cho thiết bị thật
+  API_BASE_URL: 'http://localhost:9999/api',
+  // API_BASE_URL: 'http://192.168.1.100:9999/api', // Ví dụ cho thiết bị thật
 
   // Timeout cho API requests (ms)
   TIMEOUT: 30000,

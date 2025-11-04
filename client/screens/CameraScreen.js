@@ -19,6 +19,8 @@ import { usePermissions as useMediaLibraryPermissions } from 'expo-media-library
 import * as FileSystem from 'expo-file-system/legacy';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { useNavigation } from '@react-navigation/native';
+import CONFIG from '../config';
+import { analyzeImage, formatErrorMessage } from '../utils/api';
 
 export default function CameraScreen() {
   const [hasPermission, requestPermission] = useCameraPermissions();
@@ -30,8 +32,106 @@ export default function CameraScreen() {
   const [capturedUri, setCapturedUri] = useState(null);
   const [capturedLocation, setCapturedLocation] = useState(null);
   const [isSaving, setIsSaving] = useState(false);
+  const [analyzing, setAnalyzing] = useState(false);
+  const [aiDescription, setAiDescription] = useState('');
+  const [addressInfo, setAddressInfo] = useState(null);
   const cameraRef = useRef(null);
   const navigation = useNavigation();
+
+  const analyzeImageAndLocation = async (imageUri, location) => {
+    setAnalyzing(true);
+    try {
+      // Get detailed address using Google Maps API
+      let addressData = null;
+      if (location?.coords) {
+        const { latitude, longitude } = location.coords;
+        try {
+          const geoController = new AbortController();
+          const geoTimeoutId = setTimeout(() => geoController.abort(), 10000);
+
+          const response = await fetch(
+            `https://maps.googleapis.com/maps/api/geocode/json?latlng=${latitude},${longitude}&key=AIzaSyAsC1F-paj-AZzDUqgPnoaRrDiHCDdf1KA`,
+            {
+              signal: geoController.signal,
+              headers: {
+                'Accept': 'application/json',
+              }
+            }
+          );
+
+          clearTimeout(geoTimeoutId);
+          const data = await response.json();
+          if (data.results && data.results[0]) {
+            const result = data.results[0];
+            const components = result.address_components || [];
+
+            // Extract detailed address components
+            const streetNumber = components.find(c => c.types.includes('street_number'))?.long_name;
+            const route = components.find(c => c.types.includes('route'))?.long_name;
+            const sublocality = components.find(c => c.types.includes('sublocality'))?.long_name;
+            const locality = components.find(c => c.types.includes('locality'))?.long_name;
+            const administrativeAreaLevel2 = components.find(c => c.types.includes('administrative_area_level_2'))?.long_name;
+            const administrativeAreaLevel1 = components.find(c => c.types.includes('administrative_area_level_1'))?.long_name;
+            const country = components.find(c => c.types.includes('country'))?.long_name;
+
+            addressData = {
+              formatted: result.formatted_address,
+              street: streetNumber && route ? `${streetNumber} ${route}` : route || '',
+              ward: sublocality || '',
+              district: locality || administrativeAreaLevel2 || '',
+              city: administrativeAreaLevel1 || '',
+              country: country || '',
+              coordinates: [longitude, latitude]
+            };
+          }
+        } catch (geoError) {
+          console.warn('Lỗi định vị địa chỉ:', geoError);
+          if (geoError.name === 'AbortError') {
+            console.warn('Định vị địa chỉ bị timeout');
+          } else if (geoError.message.includes('Network request failed')) {
+            console.warn('Lỗi kết nối mạng khi định vị địa chỉ');
+          }
+          // Fallback to basic location info
+          addressData = {
+            formatted: `Vĩ độ: ${latitude.toFixed(4)}, Kinh độ: ${longitude.toFixed(4)}`,
+            street: '',
+            ward: '',
+            district: '',
+            city: '',
+            country: '',
+            coordinates: [longitude, latitude]
+          };
+        }
+      }
+
+      // Analyze image with AI using the centralized API function
+      let aiResult = null;
+      try {
+        const base64 = await FileSystem.readAsStringAsync(imageUri, {
+          encoding: FileSystem.EncodingType.Base64,
+        });
+        const imageData = `data:image/jpeg;base64,${base64}`;
+
+        aiResult = await analyzeImage(imageData, location?.coords?.latitude, location?.coords?.longitude);
+      } catch (aiError) {
+        console.warn('Phân tích AI thất bại:', aiError);
+        const errorMessage = formatErrorMessage(aiError);
+        console.warn('Lỗi được format:', errorMessage);
+        aiResult = { ai: { aiDescription: errorMessage } };
+      }
+
+      // Set results
+      setAddressInfo(addressData);
+      setAiDescription(aiResult?.ai?.aiDescription || 'Không thể phân tích ảnh');
+
+    } catch (error) {
+      console.error('Lỗi phân tích:', error);
+      const errorMessage = formatErrorMessage(error);
+      setAiDescription(errorMessage);
+    } finally {
+      setAnalyzing(false);
+    }
+  };
 
   const takePicture = async () => {
     if (!cameraRef.current || !cameraReady) return;
@@ -39,7 +139,7 @@ export default function CameraScreen() {
     if (!locationPermission?.granted) {
       const { status } = await requestLocationPermission();
       if (status !== 'granted') {
-        console.log('Location permission denied. Proceeding without location.');
+        console.log('Quyền truy cập vị trí bị từ chối. Tiếp tục mà không có vị trí.');
       }
     }
 
@@ -52,15 +152,22 @@ export default function CameraScreen() {
             accuracy: Location.Accuracy.Balanced,
           });
         } catch (e) {
-          console.warn('Could not get location:', e.message || e);
+          console.warn('Không thể lấy vị trí:', e.message || e);
           // Không có location cũng OK, tiếp tục
         }
       }
       setCapturedUri(photo.uri);
       setCapturedLocation(loc);
       setPreviewVisible(true);
+
+      // Start background analysis
+      setTimeout(() => {
+        analyzeImageAndLocation(photo.uri, loc).catch(error => {
+          console.warn('Phân tích nền thất bại:', error);
+        });
+      }, 500);
     } catch (error) {
-      console.error('Error taking picture:', error);
+      console.error('Lỗi chụp ảnh:', error);
     }
   };
 
@@ -70,7 +177,7 @@ export default function CameraScreen() {
     if (!mediaPermission?.granted) {
       const { status } = await requestMediaPermission();
       if (status !== 'granted') {
-        Alert.alert('Permission required', 'Media library permission is required to save photos.');
+        Alert.alert('Cần cấp quyền', 'Cần quyền truy cập thư viện để lưu ảnh.');
         return;
       }
     }
@@ -87,37 +194,41 @@ export default function CameraScreen() {
           if (geos && geos.length > 0) address = geos[0];
         }
       } catch (e) {
-        console.warn('Reverse geocode failed:', e);
+        console.warn('Định vị địa chỉ thất bại:', e);
       }
 
       Alert.alert(
-        'Save photo',
-        `${address?.city || address?.region || 'No address available'}\n\nSave photo to app storage?`,
+        'Lưu ảnh',
+        `📍 ${addressInfo ? `${addressInfo.ward ? addressInfo.ward + ', ' : ''}${addressInfo.district}, ${addressInfo.city}` : 'Không có địa chỉ'}\n\n📝 ${aiDescription}\n\nLưu ảnh vào bộ sưu tập?`,
         [
-          { text: 'Cancel', style: 'cancel' },
+          { text: 'Hủy', style: 'cancel' },
           {
-            text: 'Save',
+            text: 'Lưu',
             onPress: async () => {
               try {
                 await saveToAppStorage(capturedUri, {
-                  address,
+                  address: addressInfo,
                   location: lat && lng ? { type: 'Point', coordinates: [lng, lat] } : null,
+                  aiDescription: aiDescription,
                 });
-                Alert.alert('Saved', 'Photo saved to app storage', [
+                Alert.alert('Đã lưu', 'Ảnh đã được lưu vào bộ sưu tập', [
                   {
                     text: 'OK',
                     onPress: () => {
                       setPreviewVisible(false);
                       setCapturedUri(null);
                       setCapturedLocation(null);
+                      setAiDescription('');
+                      setAddressInfo(null);
+                      setAnalyzing(false);
                       // Navigate về Camera tab (reset stack)
                       navigation.navigate('Camera', { screen: 'CameraMain' });
                     },
                   },
                 ]);
               } catch (e) {
-                console.warn('Could not save to app storage:', e);
-                Alert.alert('Error', 'Could not save photo');
+                console.warn('Không thể lưu vào bộ nhớ ứng dụng:', e);
+                Alert.alert('Lỗi', 'Không thể lưu ảnh');
               }
             },
           },
@@ -128,6 +239,8 @@ export default function CameraScreen() {
               navigation.navigate('CreateCaptionScreen', {
                 image: capturedUri,
                 location: lat && lng ? { type: 'Point', coordinates: [lng, lat] } : null,
+                aiSuggestion: aiDescription,
+                addressInfo: addressInfo,
               });
             },
           },
@@ -135,8 +248,8 @@ export default function CameraScreen() {
         { cancelable: true }
       );
     } catch (error) {
-      console.error('Error in analyze & save:', error);
-      Alert.alert('Error', 'Could not analyze or save photo');
+      console.error('Lỗi khi phân tích và lưu:', error);
+      Alert.alert('Lỗi', 'Không thể phân tích hoặc lưu ảnh');
     } finally {
       setIsSaving(false);
     }
@@ -164,6 +277,7 @@ export default function CameraScreen() {
       createdAt: ts,
       address: meta.address || null,
       location: meta.location || null,
+      aiDescription: meta.aiDescription || null,
     };
 
     const raw = await AsyncStorage.getItem('LOCAL_POSTS');
@@ -171,16 +285,16 @@ export default function CameraScreen() {
     arr.unshift(post);
     await AsyncStorage.setItem('LOCAL_POSTS', JSON.stringify(arr));
 
-    console.log('📸 Camera: Saved photo to storage. Total photos:', arr.length);
+    console.log('📸 Camera: Đã lưu ảnh vào bộ nhớ. Tổng số ảnh:', arr.length);
   };
 
   const handleShare = async () => {
     if (!capturedUri) return;
     try {
-      await Share.share({ url: capturedUri, message: 'Check out this photo' });
+      await Share.share({ url: capturedUri, message: 'Xem ảnh này đi!' });
     } catch (error) {
-      console.error('Error sharing image:', error);
-      Alert.alert('Error', 'Could not share photo');
+      console.error('Lỗi chia sẻ ảnh:', error);
+      Alert.alert('Lỗi', 'Không thể chia sẻ ảnh');
     }
   };
 
@@ -196,9 +310,9 @@ export default function CameraScreen() {
     return (
       <View style={styles.permissionContainer}>
         <Text style={{ textAlign: 'center', marginBottom: 16 }}>
-          We need your permission to show the camera.
+          Chúng tôi cần quyền truy cập camera để chụp ảnh.
         </Text>
-        <Button onPress={requestPermission} title="Grant Permission" />
+        <Button onPress={requestPermission} title="Cấp quyền" />
       </View>
     );
   }
@@ -230,10 +344,49 @@ export default function CameraScreen() {
         <Modal animationType="slide" transparent={false} visible={previewVisible}>
           <View style={styles.container}>
             <Image source={{ uri: capturedUri }} style={styles.previewImage} />
+
+            {/* Analysis Results */}
+            <View style={styles.analysisContainer}>
+              {analyzing ? (
+                <View style={styles.analyzingContainer}>
+                  <ActivityIndicator size="small" color="#2196F3" />
+                  <Text style={styles.analyzingText}>Đang phân tích ảnh...</Text>
+                </View>
+              ) : (
+                <>
+                  {addressInfo && (
+                    <View style={styles.infoBox}>
+                      <Text style={styles.infoLabel}>📍 Địa chỉ:</Text>
+                      <Text style={styles.infoText}>
+                        {addressInfo.ward && `${addressInfo.ward}, `}
+                        {addressInfo.district}, {addressInfo.city}
+                      </Text>
+                    </View>
+                  )}
+
+                  {aiDescription && (
+                    <View style={styles.infoBox}>
+                      <Text style={styles.infoLabel}>🤖 AI phân tích:</Text>
+                      <Text style={styles.infoText}>
+                        {aiDescription.includes('Không thể') || aiDescription.includes('timeout') || aiDescription.includes('kết nối') ?
+                          `${aiDescription}\n\n💡 Mẹo: Kiểm tra kết nối mạng và thử lại` :
+                          aiDescription
+                        }
+                      </Text>
+                    </View>
+                  )}
+                </>
+              )}
+            </View>
+
             <View style={styles.previewButtons}>
-              <Button title="Retake" onPress={() => setPreviewVisible(false)} />
-              <Button title="Save & Use" onPress={handleSaveToGallery} disabled={isSaving} />
-              <Button title="Share" onPress={handleShare} />
+              <Button title="Chụp lại" onPress={() => setPreviewVisible(false)} />
+              <Button
+                title={analyzing ? "Đang phân tích..." : "Lưu & Sử dụng"}
+                onPress={handleSaveToGallery}
+                disabled={isSaving || analyzing}
+              />
+              <Button title="Chia sẻ" onPress={handleShare} />
             </View>
           </View>
         </Modal>
@@ -290,6 +443,38 @@ const styles = StyleSheet.create({
   previewImage: {
     flex: 1,
     resizeMode: 'contain',
+  },
+  analysisContainer: {
+    padding: 15,
+    backgroundColor: 'rgba(0,0,0,0.8)',
+  },
+  analyzingContainer: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    padding: 10,
+  },
+  analyzingText: {
+    marginLeft: 10,
+    color: '#fff',
+    fontSize: 14,
+  },
+  infoBox: {
+    backgroundColor: 'rgba(255,255,255,0.1)',
+    padding: 10,
+    borderRadius: 8,
+    marginBottom: 8,
+  },
+  infoLabel: {
+    fontSize: 12,
+    fontWeight: 'bold',
+    color: '#2196F3',
+    marginBottom: 4,
+  },
+  infoText: {
+    fontSize: 14,
+    color: '#fff',
+    lineHeight: 18,
   },
   previewButtons: {
     flexDirection: 'row',
