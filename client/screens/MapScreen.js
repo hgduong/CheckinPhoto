@@ -1,4 +1,5 @@
-import React, { useEffect, useState } from "react";
+import React, { useEffect, useState, useRef } from "react";
+import * as Location from "expo-location";
 import {
   View,
   Text,
@@ -23,6 +24,7 @@ import {
 import { db, auth } from "../firebaseConfig";
 
 export default function MapScreen() {
+  const mapRef = useRef(null);
   const [users, setUsers] = useState([]);
   const [search, setSearch] = useState("");
   const [filterLocation, setFilterLocation] = useState("");
@@ -32,26 +34,55 @@ export default function MapScreen() {
   const [loading, setLoading] = useState(true);
   const [currentUid, setCurrentUid] = useState(null);
 
-  // ✅ Lấy user hiện tại & theo dõi realtime following list
+  // Lấy vị trí hiện tại và zoom đến đó
+  useEffect(() => {
+    const fetchAndCenter = async () => {
+      try {
+        const { status } = await Location.requestForegroundPermissionsAsync();
+        if (status !== "granted") {
+          console.warn("Location permission not granted");
+          return;
+        }
+
+        const position = await Location.getCurrentPositionAsync({
+          accuracy: Location.Accuracy.Highest,
+        });
+        const { latitude, longitude } = position.coords;
+        const region = {
+          latitude,
+          longitude,
+          latitudeDelta: 0.01,
+          longitudeDelta: 0.01,
+        };
+
+        if (mapRef.current && mapRef.current.animateToRegion) {
+          mapRef.current.animateToRegion(region, 1000);
+        }
+      } catch (error) {
+        console.error("Lỗi lấy vị trí:", error);
+      }
+    };
+
+    fetchAndCenter();
+  }, []);
+
+  // Lấy UID hiện tại và danh sách following
   useEffect(() => {
     const unsub = auth.onAuthStateChanged((user) => {
       if (user) {
         setCurrentUid(user.uid);
-
-        // Nghe realtime danh sách following của user hiện tại
         const followUnsub = onSnapshot(doc(db, "users", user.uid), (snap) => {
           if (snap.exists()) {
             setFollowedUsers(snap.data().following || []);
           }
         });
-
         return followUnsub;
       }
     });
     return unsub;
   }, []);
 
-  // ✅ Lắng nghe realtime danh sách users
+  // Lấy danh sách người dùng
   useEffect(() => {
     const unsubscribe = onSnapshot(
       collection(db, "users"),
@@ -72,9 +103,9 @@ export default function MapScreen() {
     return () => unsubscribe();
   }, []);
 
-  // ✅ Follow/Unfollow (đồng bộ Firestore)
+  // Follow/Unfollow
   const handleFollow = async (targetId) => {
-    if (targetId === currentUid) return; // Không follow chính mình
+    if (targetId === currentUid) return;
     try {
       const currentRef = doc(db, "users", currentUid);
       const targetRef = doc(db, "users", targetId);
@@ -87,26 +118,21 @@ export default function MapScreen() {
       const isFollowed = currentFollowing.includes(targetId);
 
       if (isFollowed) {
-        // ❌ Bỏ follow
         await updateDoc(currentRef, {
           following: arrayRemove(targetId),
         });
         await updateDoc(targetRef, {
           followers: Math.max((targetSnap.data().followers || 1) - 1, 0),
         });
-        console.log(`👋 Unfollowed user ${targetId}`);
       } else {
-        // ✅ Follow mới
         await updateDoc(currentRef, {
           following: arrayUnion(targetId),
         });
         await updateDoc(targetRef, {
           followers: (targetSnap.data().followers || 0) + 1,
         });
-        console.log(`⭐ Followed user ${targetId}`);
       }
 
-      // Load lại user đang mở modal
       const updatedSnap = await getDoc(targetRef);
       if (updatedSnap.exists()) {
         setSelectedUser((prev) => ({
@@ -119,7 +145,7 @@ export default function MapScreen() {
     }
   };
 
-  // ✅ Bộ lọc tìm kiếm
+  // Bộ lọc người dùng
   const filteredUsers = users.filter((user) => {
     const matchName = user.name?.toLowerCase().includes(search.toLowerCase());
     const matchLocation = filterLocation
@@ -139,7 +165,7 @@ export default function MapScreen() {
 
   return (
     <View style={{ flex: 1 }}>
-      {/* Thanh tìm kiếm */}
+      {/* Tìm kiếm */}
       <View style={styles.searchBar}>
         <TextInput
           placeholder="🔍 Tìm kiếm người dùng..."
@@ -169,6 +195,7 @@ export default function MapScreen() {
 
       {/* Bản đồ */}
       <MapView
+        ref={mapRef}
         style={{ flex: 1 }}
         initialRegion={{
           latitude: 21.0285,
@@ -177,12 +204,11 @@ export default function MapScreen() {
           longitudeDelta: 0.08,
         }}
       >
-        {filteredUsers.map((user, index) => {
+        {filteredUsers.map((user) => {
           if (!user.latitude || !user.longitude) return null;
 
-          // Offset nhỏ tránh marker trùng
-          const offsetLat = (Math.random() - 0.1) * 0.0017;
-          const offsetLng = (Math.random() - 0.1) * 0.0009;
+          const offsetLat = (Math.random() - 0.000001) * 0.00001;
+          const offsetLng = (Math.random() - 0.000001) * 0.00001;
 
           return (
             <Marker
@@ -228,7 +254,6 @@ export default function MapScreen() {
                 <Text>Số bài đăng: {selectedUser.postCount || 0}</Text>
                 <Text>Người theo dõi: {selectedUser.followers || 0}</Text>
 
-                {/* Ẩn nút follow nếu là chính mình */}
                 {selectedUser.id !== currentUid && (
                   <TouchableOpacity
                     style={[
@@ -256,8 +281,7 @@ export default function MapScreen() {
       </Modal>
     </View>
   );
-}
-
+};
 /* ==================== STYLE ==================== */
 const styles = StyleSheet.create({
   centered: {
@@ -288,11 +312,14 @@ const styles = StyleSheet.create({
   },
   activeFilter: { backgroundColor: "#2196F3", color: "#fff" },
   avatar: {
-    width: 40,
-    height: 40,
+    width: 30,
+    height: 30,
     borderRadius: 20,
     borderWidth: 2,
-    borderColor: "#fff",
+    borderColor: "#fafafaff",
+    position: "absolute"
+    
+    
   },
   modalContainer: {
     flex: 1,

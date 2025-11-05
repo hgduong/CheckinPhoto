@@ -1,6 +1,7 @@
 import React from 'react';
 import { createStackNavigator } from '@react-navigation/stack';
-import CameraScreen from '../screens/CameraScreen';
+// import CameraScreen from '../screens/CameraScreen';
+import CameraScreen from '../screens/CameraScreenV2';
 import CreateCaptionScreen from '../screens/CreateCaptionScreen';
 
 const Stack = createStackNavigator();
@@ -12,7 +13,7 @@ export default function CameraStack() {
         headerShown: false,
       }}
     >
-      <Stack.Screen name="CameraMain" component={CameraScreen} />
+       <Stack.Screen name="CameraMain" component={CameraScreen} />
       <Stack.Screen 
         name="CreateCaptionScreen" 
         component={CreateCaptionScreen}
