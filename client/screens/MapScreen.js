@@ -145,6 +145,34 @@ export default function MapScreen() {
     }
   };
 
+  // Center map to user's current location
+  const centerOnUser = async () => {
+    try {
+      const { status } = await Location.requestForegroundPermissionsAsync();
+      if (status !== "granted") {
+        console.warn("Location permission not granted");
+        return;
+      }
+      const position = await Location.getCurrentPositionAsync({
+        accuracy: Location.Accuracy.Highest,
+      });
+      const { latitude, longitude } = position.coords;
+      const region = {
+        latitude,
+        longitude,
+        latitudeDelta: 0.01,
+        longitudeDelta: 0.01,
+      };
+      if (mapRef.current && mapRef.current.animateToRegion) {
+        mapRef.current.animateToRegion(region, 800);
+      } else if (mapRef.current && mapRef.current.animateCamera) {
+        mapRef.current.animateCamera({ center: { latitude, longitude } }, { duration: 800 });
+      }
+    } catch (err) {
+      console.error("Error centering map:", err);
+    }
+  };
+
   // Bộ lọc người dùng
   const filteredUsers = users.filter((user) => {
     const matchName = user.name?.toLowerCase().includes(search.toLowerCase());
@@ -167,29 +195,13 @@ export default function MapScreen() {
     <View style={{ flex: 1 }}>
       {/* Tìm kiếm */}
       <View style={styles.searchBar}>
-        <TextInput
-          placeholder="🔍 Tìm kiếm người dùng..."
-          value={search}
-          onChangeText={setSearch}
-          style={styles.input}
-        />
+        
         <ScrollView
           horizontal
           showsHorizontalScrollIndicator={false}
           style={styles.filterRow}
         >
-          {["", "Hoàn Kiếm", "Ba Đình", "Cầu Giấy", "Kim Mã"].map((loc) => (
-            <Text
-              key={loc}
-              style={[
-                styles.filterButton,
-                filterLocation === loc && styles.activeFilter,
-              ]}
-              onPress={() => setFilterLocation(loc)}
-            >
-              {loc || "Tất cả"}
-            </Text>
-          ))}
+          
         </ScrollView>
       </View>
 
@@ -234,6 +246,11 @@ export default function MapScreen() {
           );
         })}
       </MapView>
+
+      {/* Recenter button */}
+      <TouchableOpacity style={styles.recenterButton} onPress={centerOnUser}>
+        <Text style={styles.recenterText}>⤢</Text>
+      </TouchableOpacity>
 
       {/* Modal thông tin người dùng */}
       <Modal visible={isModalVisible} transparent animationType="slide">
@@ -357,4 +374,20 @@ const styles = StyleSheet.create({
   followed: { backgroundColor: "#aaa" },
   followText: { color: "#fff", fontWeight: "bold" },
   closeText: { color: "#2196F3", marginTop: 10 },
+  recenterButton: {
+    position: "absolute",
+    bottom: 140,
+    right: 16,
+    backgroundColor: "#fff",
+    width: 52,
+    height: 52,
+    borderRadius: 26,
+    justifyContent: "center",
+    alignItems: "center",
+    elevation: 6,
+    shadowColor: "#000",
+    shadowOpacity: 0.15,
+    shadowOffset: { width: 0, height: 2 },
+  },
+  recenterText: { fontSize: 22, color: "#2196F3" },
 });

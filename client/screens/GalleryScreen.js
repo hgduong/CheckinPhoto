@@ -130,7 +130,59 @@ export default function GalleryScreen({ navigation }) {
 
 
   const handleUpload = async () => {
-    Alert.alert('Upload disabled', 'This build saves photos locally. Enable backend upload in a different build.');
+    try {
+      // Get current user info from Firebase Auth
+      const { auth } = await import('../firebaseConfig');
+      const currentUser = auth.currentUser;
+      if (!currentUser) {
+        Alert.alert('Lỗi', 'Bạn cần đăng nhập để upload');
+        return;
+      }
+
+      // Create post data (don't include id, let Firebase generate it)
+      const postData = {
+        author: {
+          id: currentUser.uid, // Use actual Firebase UID
+          name: 'Tên của bạn', // TODO: Get from user profile
+          avatar: 'https://randomuser.me/api/portraits/men/1.jpg' // TODO: Get from user profile
+        },
+        title: selectedImage.aiDescription || 'Ảnh của tôi',
+        description: selectedImage.aiDescription || '',
+        image: selectedImage.uri,
+        likes: 0,
+        comments: 0,
+        shares: 0,
+        maps: 1,
+        createdAt: new Date(), // Use Date object for Firebase timestamp
+        likedBy: [],
+        location: selectedImage.address
+      };
+
+      // Save to Firebase
+      const { collection, addDoc, serverTimestamp } = await import('firebase/firestore');
+      const { db } = await import('../firebaseConfig');
+
+      // Use serverTimestamp for consistent timing
+      const firebasePostData = {
+        ...postData,
+        createdAt: serverTimestamp()
+      };
+
+      const docRef = await addDoc(collection(db, 'posts'), firebasePostData);
+      console.log('📸 Gallery: Post uploaded with Firebase ID:', docRef.id);
+
+      // Update the post data with the correct Firebase ID for immediate display
+      const updatedPostData = { ...postData, id: docRef.id };
+      console.log('📸 Gallery: Updated post data:', updatedPostData);
+
+      Alert.alert('Thành công', 'Ảnh đã được đăng lên trang chủ!', [
+        { text: 'OK', onPress: () => setModalVisible(false) }
+      ]);
+
+    } catch (error) {
+      console.error('Upload error:', error);
+      Alert.alert('Lỗi', 'Không thể upload ảnh');
+    }
   };
 
   const handleDelete = async () => {
@@ -265,7 +317,15 @@ export default function GalleryScreen({ navigation }) {
                 />
 
               ) : (
-                <Text style={styles.suggestions}>{selectedImage?.aiDescription || editedSuggestions}</Text>
+                <View>
+                  <Text style={styles.suggestions}>{selectedImage?.aiDescription || editedSuggestions}</Text>
+                  {selectedImage?.likes !== undefined && (
+                    <View style={styles.likesContainer}>
+                      <MaterialIcons name="favorite" size={16} color="#2196F3" />
+                      <Text style={styles.likesText}>{selectedImage.likes} lượt thích</Text>
+                    </View>
+                  )}
+                </View>
               )}
             </ScrollView>
 
@@ -406,6 +466,20 @@ const styles = StyleSheet.create({
     borderColor: '#ccc',
     borderRadius: 8,
     padding: 10,
+  },
+  likesContainer: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    marginTop: 8,
+    paddingTop: 8,
+    borderTopWidth: 1,
+    borderTopColor: '#eee',
+  },
+  likesText: {
+    fontSize: 14,
+    color: '#2196F3',
+    marginLeft: 4,
+    fontWeight: '600',
   },
   actionButtons: {
     flexDirection: 'row',
