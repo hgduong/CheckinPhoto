@@ -26,7 +26,6 @@ import { StatusBar } from "expo-status-bar";
 // Appwrite
 import { ID } from "react-native-appwrite";
 import { AppwriteClientFactory } from "../appwrite.config";
-import { analyzeImage, formatErrorMessage } from "../utils/api";
 
 const storage = AppwriteClientFactory.getInstance().storage;
 
@@ -45,9 +44,6 @@ export default function CameraScreenWithGallery() {
   const [previewVisible, setPreviewVisible] = useState(false);
   const [capturedUri, setCapturedUri] = useState(null);
   const [capturedLocation, setCapturedLocation] = useState(null);
-  const [aiDescription, setAiDescription] = useState("");
-  const [addressInfo, setAddressInfo] = useState(null);
-  const [analyzing, setAnalyzing] = useState(false);
   const [uploading, setUploading] = useState(false);
 
   const navigation = useNavigation();
@@ -67,18 +63,25 @@ export default function CameraScreenWithGallery() {
     }
 
     try {
+      // Capture first (fast). Do not block waiting for location.
       const photo = await cameraRef.current.takePictureAsync({ quality: 0.8 });
-      let loc = null;
+      setCapturedUri(photo.uri);
+      setCapturedLocation(null);
+      setPreviewVisible(true);
+
+      // Fetch location in background (non-blocking) and attach when available
       if (locationPermission?.granted) {
-        try {
-          loc = await Location.getCurrentPositionAsync({
-            accuracy: Location.Accuracy.Balanced,
-          });
-        } catch (e) {
-          console.warn("Không lấy được vị trí:", e);
-        }
+        (async () => {
+          try {
+            const loc = await Location.getCurrentPositionAsync({
+              accuracy: Location.Accuracy.Balanced,
+            });
+            setCapturedLocation(loc);
+          } catch (e) {
+            console.warn("Không lấy được vị trí:", e);
+          }
+        })();
       }
-      openPreview(photo.uri, loc);
     } catch (error) {
       console.error("Lỗi chụp ảnh:", error);
       Alert.alert("Lỗi", "Không thể chụp ảnh");
@@ -100,95 +103,28 @@ export default function CameraScreenWithGallery() {
     });
 
     if (!result.canceled && result.assets?.[0]) {
-      openPreview(result.assets[0].uri, null);
-    }
-  };
-
-  // === MỞ PREVIEW ===
-  const openPreview = (uri, location) => {
-    setCapturedUri(uri);
-    setCapturedLocation(location);
-    setPreviewVisible(true);
-    setAiDescription("");
-    setAddressInfo(null);
-
-    setTimeout(() => {
-      analyzeImageAndLocation(uri, location).catch(console.warn);
-    }, 300);
-  };
-
-  // === PHÂN TÍCH ẢNH + ĐỊA CHỈ ===
-  const analyzeImageAndLocation = async (imageUri, location) => {
-    setAnalyzing(true);
-    try {
-      let addressData = null;
-      if (location?.coords) {
-        const { latitude, longitude } = location.coords;
-        try {
-          const controller = new AbortController();
-          const timeoutId = setTimeout(() => controller.abort(), 10000);
-
-          const response = await fetch(
-            `https://maps.googleapis.com/maps/api/geocode/json?latlng=${latitude},${longitude}&key=AIzaSyAsC1F-paj-AZzDUqgPnoaRrDiHCDdf1KA`,
-            { signal: controller.signal }
-          );
-          clearTimeout(timeoutId);
-          const data = await response.json();
-
-          if (data.results?.[0]) {
-            const r = data.results[0];
-            const c = r.address_components || [];
-            addressData = {
-              formatted: r.formatted_address,
-              ward:
-                c.find((i) => i.types.includes("sublocality"))?.long_name || "",
-              district:
-                c.find((i) => i.types.includes("locality"))?.long_name ||
-                c.find((i) => i.types.includes("administrative_area_level_2"))
-                  ?.long_name ||
-                "",
-              city:
-                c.find((i) => i.types.includes("administrative_area_level_1"))
-                  ?.long_name || "",
-              country:
-                c.find((i) => i.types.includes("country"))?.long_name || "",
-              coordinates: [longitude, latitude],
-            };
+      // Show preview immediately and try to get location in background
+      setCapturedUri(result.assets[0].uri);
+      setCapturedLocation(null);
+      setPreviewVisible(true);
+      if (locationPermission?.granted) {
+        (async () => {
+          try {
+            const loc = await Location.getCurrentPositionAsync({
+              accuracy: Location.Accuracy.Balanced,
+            });
+            setCapturedLocation(loc);
+          } catch (e) {
+            console.warn("Không lấy được vị trí:", e);
           }
-        } catch (e) {
-          console.warn("Lỗi geocoding:", e);
-          addressData = {
-            formatted: `Lat: ${latitude.toFixed(4)}, Lng: ${longitude.toFixed(
-              4
-            )}`,
-          };
-        }
+        })();
       }
-
-      // AI Analysis
-      let aiResult = { ai: { aiDescription: "Không thể phân tích ảnh" } };
-      try {
-        const base64 = await FileSystem.readAsStringAsync(imageUri, {
-          encoding: FileSystem.EncodingType.Base64,
-        });
-        const imageData = `data:image/jpeg;base64,${base64}`;
-        aiResult = await analyzeImage(
-          imageData,
-          location?.coords?.latitude,
-          location?.coords?.longitude
-        );
-      } catch (e) {
-        aiResult.ai.aiDescription = formatErrorMessage(e);
-      }
-
-      setAddressInfo(addressData);
-      setAiDescription(aiResult.ai.aiDescription || "Không có mô tả");
-    } catch (error) {
-      setAiDescription(formatErrorMessage(error));
-    } finally {
-      setAnalyzing(false);
     }
   };
+
+  // Preview is shown immediately after capture; reverse-geocoding/AI removed for performance.
+
+  // AI analysis and reverse-geocoding removed to prioritize capture/save speed.
 
   // === UPLOAD LÊN APPWRITE ===
   const prepareNativeFile = async (
@@ -235,7 +171,7 @@ export default function CameraScreenWithGallery() {
         uri: fileUrl,
         localUri: capturedUri,
         createdAt: Date.now(),
-        address: addressInfo,
+        // Attach raw coordinates for fast saving; reverse geocoding can be done later server-side if needed
         location: capturedLocation
           ? {
               type: "Point",
@@ -245,7 +181,6 @@ export default function CameraScreenWithGallery() {
               ],
             }
           : null,
-        aiDescription: aiDescription,
       };
 
       const raw = await AsyncStorage.getItem("APPWRITE_POSTS");
@@ -253,7 +188,7 @@ export default function CameraScreenWithGallery() {
       arr.unshift(post);
       await AsyncStorage.setItem("APPWRITE_POSTS", JSON.stringify(arr));
 
-      Alert.alert("Thành công!", "Ảnh đã được upload lên Appwrite!", [
+      Alert.alert("Thành công!", "Ảnh đã được lưu vào thư viện", [
         { text: "OK", onPress: () => closePreview() },
       ]);
     } catch (error) {
@@ -268,8 +203,7 @@ export default function CameraScreenWithGallery() {
     setPreviewVisible(false);
     setCapturedUri(null);
     setCapturedLocation(null);
-    setAiDescription("");
-    setAddressInfo(null);
+    // cleaned up preview state
   };
 
   const handleShare = async () => {
@@ -311,7 +245,7 @@ export default function CameraScreenWithGallery() {
           style={styles.galleryButton}
           onPress={pickImageFromGallery}
         >
-          <Text style={styles.text}>Thư viện</Text>
+          <Text style={styles.text}>Tải ảnh lên</Text>
         </TouchableOpacity>
 
         <TouchableOpacity
@@ -332,40 +266,23 @@ export default function CameraScreenWithGallery() {
         <View style={styles.container}>
           <Image source={{ uri: capturedUri }} style={styles.previewImage} />
 
-          <View style={styles.analysisContainer}>
-            {analyzing ? (
-              <View style={styles.analyzingContainer}>
-                <ActivityIndicator size="small" color="#2196F3" />
-                <Text style={styles.analyzingText}>Đang phân tích...</Text>
-              </View>
-            ) : (
-              <>
-                {addressInfo && (
-                  <View style={styles.infoBox}>
-                    <Text style={styles.infoLabel}>Địa chỉ:</Text>
-                    <Text style={styles.infoText}>
-                      {addressInfo.ward && `${addressInfo.ward}, `}
-                      {addressInfo.district}, {addressInfo.city}
-                    </Text>
-                  </View>
-                )}
-                {aiDescription && (
-                  <View style={styles.infoBox}>
-                    <Text style={styles.infoLabel}>AI phân tích:</Text>
-                    <Text style={styles.infoText}>{aiDescription}</Text>
-                  </View>
-                )}
-              </>
-            )}
-          </View>
+          {/* Show coordinates when available (fast). Reverse geocoding removed. */}
+          {capturedLocation && (
+            <View style={styles.infoBox}>
+              <Text style={styles.infoLabel}>Vị trí chụp:</Text>
+              <Text style={styles.infoText}>
+                Lat: {capturedLocation.coords.latitude.toFixed(6)}, Lng: {capturedLocation.coords.longitude.toFixed(6)}
+              </Text>
+            </View>
+          )}
 
           <View style={styles.previewButtons}>
             <Button title="Hủy" onPress={closePreview} />
             <Button title="Chia sẻ" onPress={handleShare} />
             <Button
-              title={uploading ? "Đang upload..." : "Upload Appwrite"}
+              title={uploading ? "Đang lưu ảnh..." : "Lưu ảnh"}
               onPress={uploadToAppwrite}
-              disabled={uploading || analyzing}
+              disabled={uploading}
             />
           </View>
         </View>
@@ -418,13 +335,6 @@ const styles = StyleSheet.create({
   text: { fontSize: 16, color: "white" },
   previewImage: { flex: 1, resizeMode: "contain" },
   analysisContainer: { padding: 15, backgroundColor: "rgba(0,0,0,0.8)" },
-  analyzingContainer: {
-    flexDirection: "row",
-    alignItems: "center",
-    justifyContent: "center",
-    padding: 10,
-  },
-  analyzingText: { marginLeft: 10, color: "#fff", fontSize: 14 },
   infoBox: {
     backgroundColor: "rgba(255,255,255,0.1)",
     padding: 10,

@@ -13,9 +13,11 @@ import {
   TextInput,
   KeyboardAvoidingView,
   Platform,
+  ScrollView,
 } from "react-native";
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { signOut } from "firebase/auth";
+import { updatePassword, reauthenticateWithCredential, EmailAuthProvider } from 'firebase/auth';
 import {
   doc,
   getDoc,
@@ -34,13 +36,55 @@ import {
 import { auth, db } from "../firebaseConfig";
 import * as Location from "expo-location";
 import * as ImagePicker from "expo-image-picker";
-import { getStorage, ref, uploadBytes, getDownloadURL } from "firebase/storage";
+import * as FileSystem from "expo-file-system/legacy";
+import { ID } from "react-native-appwrite";
+import { AppwriteClientFactory } from "../appwrite.config";
 
 const { width } = Dimensions.get("window");
 
 export default function ProfileScreen() {
   const [tab, setTab] = useState("posts");
   const [showSettings, setShowSettings] = useState(false);
+  const [showChangePassword, setShowChangePassword] = useState(false);
+  const [currentPassword, setCurrentPassword] = useState('');
+  const [newPassword, setNewPassword] = useState('');
+  const [confirmPassword, setConfirmPassword] = useState('');
+  const [showPersonalInfo, setShowPersonalInfo] = useState(false);
+  const [showGenderModal, setShowGenderModal] = useState(false);
+  const [gender, setGender] = useState('Không có');
+  const [birthday, setBirthday] = useState('../../....');
+  const [maritalStatus, setMaritalStatus] = useState('');
+  const [interests, setInterests] = useState([]);
+  const [height, setHeight] = useState('');
+  const [weight, setWeight] = useState('');
+  const [showMaritalModal, setShowMaritalModal] = useState(false);
+  const [showInterestsModal, setShowInterestsModal] = useState(false);
+  const maritalOptions = [
+    'Độc thân',
+    'Hẹn hò',
+    'Đã kết hôn',
+    'Ly thân',
+    'Ly hôn',
+    'Góa',
+    'Khác'
+  ];
+  // Interests options
+  const interestOptions = [
+    'Thể thao', 'Âm nhạc', 'Du lịch', 'Đọc sách', 
+    'Nấu ăn', 'Công nghệ', 'Thời trang', 'Nhiếp ảnh',
+    'Yoga', 'Gaming', 'Nghệ thuật', 'Học ngoại ngữ'
+  ];
+  
+  const formatBirthday = (text) => {
+    // Remove any non-digit characters
+    const numbers = text.replace(/\D/g, '');
+    // Format as DD/MM/YYYY
+    if (numbers.length <= 2) return numbers;
+    if (numbers.length <= 4) return numbers.slice(0, 2) + '/' + numbers.slice(2);
+    return numbers.slice(0, 2) + '/' + numbers.slice(2, 4) + '/' + numbers.slice(4, 8);
+  };
+  const [savingInfo, setSavingInfo] = useState(false);
+  const [changingPassword, setChangingPassword] = useState(false);
   const [showEdit, setShowEdit] = useState(false);
   const [profile, setProfile] = useState(null);
   const [loading, setLoading] = useState(true);
@@ -67,9 +111,24 @@ export default function ProfileScreen() {
       try {
         const snap = await getDoc(doc(db, "users", user.uid));
         if (snap.exists()) {
-          setProfile(snap.data());
+          const userData = snap.data();
+          setProfile(userData);
+          // Initialize all profile fields with existing data or defaults
+          setGender(userData.gender || 'Không có');
+          setBirthday(userData.birthday || '../../....');
+          setMaritalStatus(userData.maritalStatus || '');
+          setHeight(userData.height || '');
+          setWeight(userData.weight || '');
+          setInterests(Array.isArray(userData.interests) ? userData.interests : []);
         } else {
           setProfile(null);
+          // Reset all fields to defaults if no profile exists
+          setGender('Không có');
+          setBirthday('../../....');
+          setMaritalStatus('');
+          setHeight('');
+          setWeight('');
+          setInterests([]);
         }
       } catch (err) {
         console.error("Error loading profile:", err);
@@ -139,13 +198,41 @@ export default function ProfileScreen() {
 
       let avatarUrl = profile.avatar;
       if (newData.newAvatarUri) {
-        const storage = getStorage();
-        const fileName = `avatars/${user.uid}_${Date.now()}.jpg`;
-        const imageRef = ref(storage, fileName);
-        const response = await fetch(newData.newAvatarUri);
-        const blob = await response.blob();
-        await uploadBytes(imageRef, blob);
-        avatarUrl = await getDownloadURL(imageRef);
+        // Upload avatar to Appwrite and use the public file view URL
+        try {
+          const fileInfo = await FileSystem.getInfoAsync(newData.newAvatarUri);
+          const fileObj = {
+            name: `avatar_${user.uid}_${Date.now()}.jpg`,
+            size: fileInfo.size || 0,
+            type: "image/jpeg",
+            uri: newData.newAvatarUri,
+          };
+
+          const storage = AppwriteClientFactory.getInstance().storage;
+          const res = await storage.createFile(
+            process.env.EXPO_PUBLIC_APPWRITE_BUCKET_ID,
+            ID.unique(),
+            fileObj
+          );
+
+          // Build a public file URL using getFileView
+          // storage.getFileView(...).href returns a URL string
+          const fileView = storage.getFileView(
+            process.env.EXPO_PUBLIC_APPWRITE_BUCKET_ID,
+            res.$id
+          );
+          // Some SDK returns an object with href, some return a string; handle both
+          const possibleUrl = fileView?.href || (typeof fileView === "string" ? fileView : null);
+          if (possibleUrl) {
+            avatarUrl = possibleUrl;
+          } else {
+            console.warn("Appwrite getFileView returned no URL:", fileView);
+            // keep existing avatarUrl (do not overwrite with empty string)
+          }
+        } catch (e) {
+          console.error("Appwrite avatar upload failed:", e);
+          // keep existing avatar (don't throw) so we don't set an empty avatar URL
+        }
       }
 
       await updateDoc(doc(db, "users", user.uid), {
@@ -216,16 +303,20 @@ export default function ProfileScreen() {
 
     const unsub = onSnapshot(q, (snapshot) => {
       const counts = {};
+      const lastMsgTimes = {}; // map userId -> lastMessageTime millis
 
       snapshot.docs.forEach((chatDoc) => {
         const data = chatDoc.data();
         const otherUserId = data.participants.find((id) => id !== currentUid);
         if (!otherUserId) return;
 
-        // Tìm tin nhắn chưa đọc (người khác gửi, chưa được đánh dấu)
         const lastRead = data.lastRead?.[currentUid] || 0;
-        const lastMessageTime = data.lastMessageTime?.toMillis() || 0;
+        const lastMessageTime = data.lastMessageTime?.toMillis ? data.lastMessageTime.toMillis() : (data.lastMessageTime || 0);
 
+        // store last message time for ordering
+        lastMsgTimes[otherUserId] = Math.max(lastMsgTimes[otherUserId] || 0, lastMessageTime || 0);
+
+        // unread if last message from other is after our lastRead
         if (lastMessageTime > lastRead && data.lastMessageSender !== currentUid) {
           counts[otherUserId] = (counts[otherUserId] || 0) + 1;
         }
@@ -233,12 +324,15 @@ export default function ProfileScreen() {
 
       setUnreadCounts(counts);
 
-      // Sắp xếp lại danh sách bạn bè: người có tin nhắn mới lên đầu
+      // Sắp xếp lại danh sách bạn bè: ưu tiên có unread, sau đó theo lastMessageTime desc
       setFriends((prev) => {
         const sorted = [...prev].sort((a, b) => {
-          const countA = counts[a.id] || 0;
-          const countB = counts[b.id] || 0;
-          return countB - countA;
+          const unreadA = (counts[a.id] || 0) > 0 ? 1 : 0;
+          const unreadB = (counts[b.id] || 0) > 0 ? 1 : 0;
+          if (unreadA !== unreadB) return unreadB - unreadA;
+          const timeA = lastMsgTimes[a.id] || 0;
+          const timeB = lastMsgTimes[b.id] || 0;
+          return timeB - timeA;
         });
         return sorted;
       });
@@ -426,10 +520,10 @@ export default function ProfileScreen() {
   );
 
   const EditProfileModal = () => {
-    const [name, setName] = useState(profile.name || "");
-    const [bio, setBio] = useState(profile.bio || "");
-    const [preview, setPreview] = useState(profile.avatar);
-    const [newAvatarUri, setNewAvatarUri] = useState(null);
+  const [name, setName] = useState(profile.name || "");
+  const [bio, setBio] = useState(profile.bio || "");
+  const [preview, setPreview] = useState(profile.avatar || "");
+  const [newAvatarUri, setNewAvatarUri] = useState(null);
 
     return (
       <Modal visible={showEdit} transparent animationType="slide">
@@ -445,7 +539,7 @@ export default function ProfileScreen() {
                 }
               }}
             >
-              <Image source={{ uri: preview }} style={styles.editAvatar} />
+              <Image source={{ uri: preview || "https://cdn-icons-png.flaticon.com/512/3177/3177440.png" }} style={styles.editAvatar} />
               <Text style={{ textAlign: "center", color: "#2196F3", marginTop: 8 }}>
                 Đổi ảnh đại diện
               </Text>
@@ -634,6 +728,30 @@ export default function ProfileScreen() {
               style={styles.settingsItem}
               onPress={() => {
                 setShowSettings(false);
+                setGender(profile.gender || '');
+                setBirthday(profile.birthday || '');
+                setMaritalStatus(profile.maritalStatus || '');
+                setHeight(profile.height || '');
+                setWeight(profile.weight || '');
+                setInterests(Array.isArray(profile.interests) ? profile.interests : []);
+                setShowPersonalInfo(true);
+              }}
+            >
+              <Text style={{ fontSize: 16 }}>Thông tin cá nhân</Text>
+            </TouchableOpacity>
+            <TouchableOpacity
+              style={styles.settingsItem}
+              onPress={() => {
+                setShowSettings(false);
+                setShowChangePassword(true);
+              }}
+            >
+              <Text style={{ fontSize: 16 }}>Đổi mật khẩu</Text>
+            </TouchableOpacity>
+            <TouchableOpacity
+              style={styles.settingsItem}
+              onPress={() => {
+                setShowSettings(false);
                 signOut(auth)
                   .then(() => Alert.alert("Đăng xuất thành công"))
                   .catch((err) => Alert.alert("Lỗi đăng xuất", err.message));
@@ -650,12 +768,497 @@ export default function ProfileScreen() {
           </View>
         </View>
       </Modal>
+
+      {/* PERSONAL INFO MODAL */}
+      <Modal visible={showPersonalInfo} transparent animationType="slide">
+        <View style={styles.modalOverlay}>
+          <View style={styles.editBox}>
+            <Text style={styles.modalTitle}>Thông tin cá nhân</Text>
+            
+            <View style={styles.selectContainer}>
+              <Text style={styles.label}>Giới tính</Text>
+              <TouchableOpacity
+                style={styles.dropdownButton}
+                onPress={() => setShowGenderModal(true)}
+              >
+                <Text style={styles.dropdownButtonText}>
+                  {gender || "Chọn giới tính"}
+                </Text>
+                <Text style={styles.dropdownIcon}>▼</Text>
+              </TouchableOpacity>
+
+              <Modal
+                visible={showGenderModal}
+                transparent
+                animationType="fade"
+                onRequestClose={() => setShowGenderModal(false)}
+              >
+                <TouchableOpacity
+                  style={styles.modalOverlay}
+                  activeOpacity={1}
+                  onPress={() => setShowGenderModal(false)}
+                >
+                  <View style={styles.dropdownModal}>
+                    {['Nam', 'Nữ', 'Không có'].map((option) => (
+                      <TouchableOpacity
+                        key={option}
+                        style={[
+                          styles.dropdownOption,
+                          gender === option && styles.dropdownOptionSelected
+                        ]}
+                        onPress={() => {
+                          setGender(option);
+                          setShowGenderModal(false);
+                        }}
+                      >
+                        <Text style={[
+                          styles.dropdownOptionText,
+                          gender === option && styles.dropdownOptionTextSelected
+                        ]}>
+                          {option}
+                        </Text>
+                      </TouchableOpacity>
+                    ))}
+                  </View>
+                </TouchableOpacity>
+              </Modal>
+            </View>
+
+            <View style={styles.inputContainer}>
+              <Text style={styles.label}>Ngày sinh</Text>
+              <TextInput
+                style={styles.birthdayInput}
+                placeholder="DD/MM/YYYY"
+                value={birthday}
+                onChangeText={(text) => setBirthday(formatBirthday(text))}
+                maxLength={10}
+                keyboardType="numeric"
+              />
+            </View>
+
+            <View style={styles.selectContainer}>
+              <Text style={styles.label}>Tình trạng hôn nhân</Text>
+              <TouchableOpacity
+                style={styles.dropdownButton}
+                onPress={() => setShowMaritalModal(true)}
+              >
+                <Text style={styles.dropdownButtonText}>
+                  {maritalStatus || "Chọn tình trạng"}
+                </Text>
+                <Text style={styles.dropdownIcon}>▼</Text>
+              </TouchableOpacity>
+
+              <Modal
+                visible={showMaritalModal}
+                transparent
+                animationType="fade"
+                onRequestClose={() => setShowMaritalModal(false)}
+              >
+                <TouchableOpacity
+                  style={styles.modalOverlay}
+                  activeOpacity={1}
+                  onPress={() => setShowMaritalModal(false)}
+                >
+                  <View style={styles.dropdownModal}>
+                    {maritalOptions.map((option) => (
+                      <TouchableOpacity
+                        key={option}
+                        style={[
+                          styles.dropdownOption,
+                          maritalStatus === option && styles.dropdownOptionSelected
+                        ]}
+                        onPress={() => {
+                          setMaritalStatus(option);
+                          setShowMaritalModal(false);
+                        }}
+                      >
+                        <Text style={[
+                          styles.dropdownOptionText,
+                          maritalStatus === option && styles.dropdownOptionTextSelected
+                        ]}>
+                          {option}
+                        </Text>
+                      </TouchableOpacity>
+                    ))}
+                  </View>
+                </TouchableOpacity>
+              </Modal>
+            </View>
+
+            <View style={styles.rowContainer}>
+              <View style={[styles.inputContainer, { flex: 1, marginRight: 8 }]}>
+                <Text style={styles.label}>Chiều cao (cm)</Text>
+                <TextInput
+                  style={styles.input}
+                  placeholder="VD: 170"
+                  value={height}
+                  onChangeText={setHeight}
+                  keyboardType="numeric"
+                />
+              </View>
+              <View style={[styles.inputContainer, { flex: 1, marginLeft: 8 }]}>
+                <Text style={styles.label}>Cân nặng (kg)</Text>
+                <TextInput
+                  style={styles.input}
+                  placeholder="VD: 65"
+                  value={weight}
+                  onChangeText={setWeight}
+                  keyboardType="numeric"
+                />
+              </View>
+            </View>
+
+            <View style={styles.selectContainer}>
+              <Text style={styles.label}>Sở thích</Text>
+              <TouchableOpacity
+                style={styles.interestsButton}
+                onPress={() => setShowInterestsModal(true)}
+              >
+                <Text style={styles.interestsButtonText}>
+                  {Array.isArray(interests) && interests.length > 0 
+                    ? `Đã chọn ${interests.length} sở thích` 
+                    : "Chọn sở thích"}
+                </Text>
+                <Text style={styles.dropdownIcon}>▼</Text>
+              </TouchableOpacity>
+
+              <Modal
+                visible={showInterestsModal}
+                transparent
+                animationType="slide"
+                onRequestClose={() => setShowInterestsModal(false)}
+              >
+                <TouchableOpacity
+                  style={styles.modalOverlay}
+                  activeOpacity={1}
+                  onPress={() => setShowInterestsModal(false)}
+                >
+                  <View style={[styles.dropdownModal, { width: '90%' }]}>
+                    <Text style={styles.modalTitle}>Chọn sở thích</Text>
+                    <ScrollView style={styles.interestsScrollView}>
+                      {interestOptions.map((option) => (
+                        <TouchableOpacity
+                          key={option}
+                          style={[
+                            styles.dropdownOption,
+                            interests.includes(option) && styles.dropdownOptionSelected
+                          ]}
+                          onPress={() => {
+                            if (interests.includes(option)) {
+                              setInterests(prev => prev.filter(i => i !== option));
+                            } else {
+                              setInterests(prev => [...prev, option]);
+                            }
+                          }}
+                        >
+                          <Text style={[
+                            styles.dropdownOptionText,
+                            interests.includes(option) && styles.dropdownOptionTextSelected
+                          ]}>
+                            {option}
+                          </Text>
+                          {interests.includes(option) && (
+                            <Text style={styles.checkmark}>✓</Text>
+                          )}
+                        </TouchableOpacity>
+                      ))}
+                    </ScrollView>
+                    <TouchableOpacity
+                      style={styles.doneButton}
+                      onPress={() => setShowInterestsModal(false)}
+                    >
+                      <Text style={styles.doneButtonText}>Xong</Text>
+                    </TouchableOpacity>
+                  </View>
+                </TouchableOpacity>
+              </Modal>
+              <View style={styles.interestTags}>
+                {Array.isArray(interests) && interests.map((interest, index) => (
+                  <View key={index} style={styles.interestTag}>
+                    <Text style={styles.interestTagText}>{interest}</Text>
+                    <TouchableOpacity
+                      onPress={() => setInterests(prev => 
+                        Array.isArray(prev) ? prev.filter(i => i !== interest) : []
+                      )}
+                    >
+                      <Text style={styles.removeTag}>×</Text>
+                    </TouchableOpacity>
+                  </View>
+                ))}
+              </View>
+            </View>
+
+            <View style={styles.modalButtons}>
+              <TouchableOpacity
+                onPress={async () => {
+                  try {
+                    setSavingInfo(true);
+                    const user = auth.currentUser;
+                    if (!user) return;
+
+                    await updateDoc(doc(db, "users", user.uid), {
+                      gender,
+                      birthday,
+                      maritalStatus,
+                      height: height || '',
+                      weight: weight || '',
+                      interests: Array.isArray(interests) ? interests : [],
+                      updatedAt: new Date()
+                    });
+
+                    setProfile(prev => ({
+                      ...prev,
+                      gender,
+                      birthday,
+                      interests
+                    }));
+
+                    Alert.alert("Thành công", "Thông tin đã được cập nhật!");
+                    setShowPersonalInfo(false);
+                  } catch (err) {
+                    console.error("Error saving personal info:", err);
+                    Alert.alert("Lỗi", "Không thể lưu thông tin: " + err.message);
+                  } finally {
+                    setSavingInfo(false);
+                  }
+                }}
+                disabled={savingInfo}
+              >
+                <Text style={styles.saveBtn}>
+                  {savingInfo ? "Đang lưu..." : "Lưu"}
+                </Text>
+              </TouchableOpacity>
+              <TouchableOpacity onPress={() => setShowPersonalInfo(false)}>
+                <Text style={styles.cancelBtn}>Hủy</Text>
+              </TouchableOpacity>
+            </View>
+          </View>
+        </View>
+      </Modal>
+
+      {/* CHANGE PASSWORD MODAL */}
+      <Modal visible={showChangePassword} transparent animationType="slide">
+        <View style={styles.modalOverlay}>
+          <View style={styles.editBox}>
+            <Text style={styles.modalTitle}>Đổi mật khẩu</Text>
+            <TextInput
+              placeholder="Mật khẩu hiện tại"
+              secureTextEntry
+              style={styles.input}
+              value={currentPassword}
+              onChangeText={setCurrentPassword}
+            />
+            <TextInput
+              placeholder="Mật khẩu mới"
+              secureTextEntry
+              style={styles.input}
+              value={newPassword}
+              onChangeText={setNewPassword}
+            />
+            <TextInput
+              placeholder="Nhập lại mật khẩu mới"
+              secureTextEntry
+              style={styles.input}
+              value={confirmPassword}
+              onChangeText={setConfirmPassword}
+            />
+
+            <View style={styles.modalButtons}>
+              <TouchableOpacity
+                onPress={async () => {
+                  // handle change password
+                  if (!auth.currentUser) {
+                    Alert.alert('Lỗi', 'Bạn chưa đăng nhập');
+                    return;
+                  }
+                  if (!currentPassword || !newPassword) {
+                    Alert.alert('Lỗi', 'Vui lòng nhập đầy đủ thông tin');
+                    return;
+                  }
+                  if (newPassword !== confirmPassword) {
+                    Alert.alert('Lỗi', 'Mật khẩu mới không khớp');
+                    return;
+                  }
+                  try {
+                    setChangingPassword(true);
+                    const user = auth.currentUser;
+                    const credential = EmailAuthProvider.credential(user.email, currentPassword);
+                    // reauthenticate
+                    await reauthenticateWithCredential(user, credential);
+                    // update password
+                    await updatePassword(user, newPassword);
+                    Alert.alert('Thành công', 'Mật khẩu đã được cập nhật');
+                    setShowChangePassword(false);
+                    setCurrentPassword('');
+                    setNewPassword('');
+                    setConfirmPassword('');
+                  } catch (err) {
+                    console.error('Change password error:', err);
+                    Alert.alert('Lỗi', err.message || 'Không thể đổi mật khẩu');
+                  } finally {
+                    setChangingPassword(false);
+                  }
+                }}
+                disabled={changingPassword}
+              >
+                <Text style={styles.saveBtn}>{changingPassword ? 'Đang xử lý...' : 'Lưu'}</Text>
+              </TouchableOpacity>
+              <TouchableOpacity onPress={() => setShowChangePassword(false)}>
+                <Text style={styles.cancelBtn}>Hủy</Text>
+              </TouchableOpacity>
+            </View>
+          </View>
+        </View>
+      </Modal>
     </>
   );
 }
 
 // ==================== STYLES ====================
 const styles = StyleSheet.create({
+  // Personal info styles
+  selectContainer: {
+    width: '100%',
+    marginBottom: 20,
+  },
+  label: {
+    fontSize: 15,
+    color: '#444',
+    marginBottom: 10,
+    fontWeight: '500',
+  },
+  dropdownButton: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    borderWidth: 1,
+    borderColor: '#ddd',
+    borderRadius: 10,
+    padding: 12,
+    backgroundColor: '#fff',
+  },
+  dropdownButtonText: {
+    fontSize: 16,
+    color: '#333',
+  },
+  dropdownIcon: {
+    fontSize: 16,
+    color: '#666',
+    marginLeft: 8,
+  },
+  dropdownModal: {
+    backgroundColor: '#fff',
+    borderRadius: 12,
+    padding: 8,
+    width: '80%',
+    maxHeight: '80%',
+    elevation: 5,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.25,
+    shadowRadius: 4,
+  },
+  dropdownOption: {
+    paddingVertical: 12,
+    paddingHorizontal: 16,
+    borderRadius: 8,
+  },
+  dropdownOptionSelected: {
+    backgroundColor: '#e3f2fd',
+  },
+  dropdownOptionText: {
+    fontSize: 16,
+    color: '#333',
+  },
+  dropdownOptionTextSelected: {
+    color: '#2196F3',
+    fontWeight: '500',
+  },
+  inputContainer: {
+    width: '100%',
+    marginBottom: 20,
+  },
+  birthdayInput: {
+    borderWidth: 1,
+    borderColor: '#ddd',
+    borderRadius: 10,
+    padding: 12,
+    fontSize: 16,
+    backgroundColor: '#fff',
+    color: '#333',
+    letterSpacing: 1,
+  },
+  rowContainer: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    width: '100%',
+    marginBottom: 20,
+  },
+  interestsButton: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    borderWidth: 1,
+    borderColor: '#ddd',
+    borderRadius: 10,
+    padding: 12,
+    backgroundColor: '#fff',
+    marginBottom: 10,
+  },
+  interestsButtonText: {
+    fontSize: 16,
+    color: '#333',
+  },
+  interestTags: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    marginTop: 8,
+  },
+  interestTag: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: '#e3f2fd',
+    borderRadius: 16,
+    paddingVertical: 6,
+    paddingHorizontal: 10,
+    marginRight: 8,
+    marginBottom: 8,
+  },
+  interestTagText: {
+    color: '#2196F3',
+    fontSize: 14,
+    marginRight: 4,
+  },
+  removeTag: {
+    color: '#2196F3',
+    fontSize: 18,
+    marginLeft: 2,
+  },
+  scrollViewContent: {
+    flexGrow: 1,
+    padding: 16,
+  },
+  doneButton: {
+    backgroundColor: '#2196F3',
+    borderRadius: 10,
+    padding: 12,
+    alignItems: 'center',
+    marginTop: 16,
+  },
+  doneButtonText: {
+    color: '#fff',
+    fontSize: 16,
+    fontWeight: '600',
+  },
+  checkmark: {
+    color: '#2196F3',
+    fontSize: 18,
+    marginLeft: 8,
+  },
+  interestsScrollView: {
+    maxHeight: 400,
+  },
+  
   loadingContainer: {
     flex: 1,
     justifyContent: "center",
