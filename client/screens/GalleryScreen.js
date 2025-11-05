@@ -8,16 +8,18 @@ import {
   TouchableOpacity,
   Modal,
   TextInput,
-  Share,
   ScrollView,
   ActivityIndicator,
   RefreshControl,
   Alert,
+  Dimensions,
 } from 'react-native';
 import * as Location from 'expo-location';
 import MaterialIcons from '@expo/vector-icons/MaterialIcons';
 import { useFocusEffect } from '@react-navigation/native';
 import AsyncStorage from '@react-native-async-storage/async-storage';
+
+const { width } = Dimensions.get('window');
 
 export default function GalleryScreen({ navigation }) {
   const [images, setImages] = useState([]);
@@ -30,9 +32,7 @@ export default function GalleryScreen({ navigation }) {
   const [editedSuggestions, setEditedSuggestions] = useState('');
   const [regions, setRegions] = useState([]);
   const [selectedRegion, setSelectedRegion] = useState(null);
-  const [commentText, setCommentText] = useState('');
-  const [loadingComments, setLoadingComments] = useState(false);
-  const [comments, setComments] = useState([]); 
+  // Removed comment-related states
 
 
   useFocusEffect(
@@ -45,23 +45,61 @@ export default function GalleryScreen({ navigation }) {
     setLoading(true);
     setFetchError(null);
     try {
+      // Check LOCAL_POSTS storage
       const rawLocal = await AsyncStorage.getItem('LOCAL_POSTS');
       const local = rawLocal ? JSON.parse(rawLocal) : [];
-      console.log('📸 Gallery: Loaded', local.length, 'photos from storage');
+      console.log('📸 Gallery: LOCAL_POSTS has', local.length, 'photos');
 
-      if (Array.isArray(local) && local.length > 0) {
-        // derive regions from local posts
-        const regionGroups = local.reduce((groups, image) => {
+      // Check APPWRITE_POSTS storage
+      const rawAppwrite = await AsyncStorage.getItem('APPWRITE_POSTS');
+      const appwrite = rawAppwrite ? JSON.parse(rawAppwrite) : [];
+      console.log('📸 Gallery: APPWRITE_POSTS has', appwrite.length, 'photos');
+
+      // Log details of LOCAL_POSTS
+      if (local.length > 0) {
+        console.log('📸 Gallery: LOCAL_POSTS sample:', local.slice(0, 3).map(p => ({ id: p.id, uri: p.uri ? p.uri.substring(0, 50) + '...' : 'undefined' })));
+      }
+
+      // Log details of APPWRITE_POSTS
+      if (appwrite.length > 0) {
+        console.log('📸 Gallery: APPWRITE_POSTS sample:', appwrite.slice(0, 3).map(p => ({ id: p.id, uri: p.uri ? p.uri.substring(0, 50) + '...' : 'undefined' })));
+      }
+
+      // Combine photos from both storages
+      const allPhotos = [...local, ...appwrite];
+      console.log('📸 Gallery: Total photos from both storages:', allPhotos.length);
+
+      // For Appwrite photos, use localUri if uri is undefined
+      const processedPhotos = allPhotos.map(photo => {
+        if (photo && !photo.uri && photo.localUri) {
+          console.log('📸 Gallery: Using localUri for Appwrite photo:', photo.id);
+          return { ...photo, uri: photo.localUri };
+        }
+        return photo;
+      }).filter(photo => photo && photo.uri);
+
+      console.log('📸 Gallery: Total valid photos after processing:', processedPhotos.length);
+      console.log('📸 Gallery: Filtered out', allPhotos.length - processedPhotos.length, 'invalid photos');
+
+      // Use processed photos
+      const photosToDisplay = processedPhotos;
+
+      if (Array.isArray(allPhotos) && allPhotos.length > 0) {
+        // Sort by createdAt descending (newest first)
+        allPhotos.sort((a, b) => (b.createdAt || 0) - (a.createdAt || 0));
+
+        // derive regions from processed photos
+        const regionGroups = photosToDisplay.reduce((groups, image) => {
           const region = image.address?.district || image.address?.city || image.address?.region || 'Local';
           if (!groups[region]) groups[region] = [];
           groups[region].push(image);
           return groups;
         }, {});
         setRegions(Object.keys(regionGroups));
-        setImages(local);
+        setImages(photosToDisplay);
       } else {
-        // no local posts — show empty state
-        console.log('📸 Gallery: No photos found');
+        // no posts — show empty state
+        console.log('📸 Gallery: No photos found in any storage');
         setRegions([]);
         setImages([]);
       }
@@ -83,27 +121,13 @@ export default function GalleryScreen({ navigation }) {
 
   const handleImageSelect = async (image) => {
     setSelectedImage(image);
-    // Use stored aiDescription if present; otherwise allow user to edit
-    const suggestionsArr = [];
-    if (image.aiDescription) suggestionsArr.push(image.aiDescription);
-    setAiSuggestions(suggestionsArr);
-    setEditedSuggestions(suggestionsArr.join('\n'));
-    fetchComments(image.id);
+    // Always use the current aiDescription from the image object
+    setEditedSuggestions(image.aiDescription || '');
     setModalVisible(true);
   };
 
 
 
-  const handleShare = async () => {
-    try {
-      await Share.share({
-        url: selectedImage.uri,
-        message: 'Check out this photo!',
-      });
-    } catch (error) {
-      console.error('Error sharing image:', error);
-    }
-  };
 
   const handleUpload = async () => {
     Alert.alert('Upload disabled', 'This build saves photos locally. Enable backend upload in a different build.');
@@ -120,15 +144,21 @@ export default function GalleryScreen({ navigation }) {
           style: 'destructive',
           onPress: async () => {
             try {
-              // Remove from AsyncStorage
-              const rawLocal = await AsyncStorage.getItem('LOCAL_POSTS');
-              if (rawLocal) {
-                let localPosts = JSON.parse(rawLocal);
-                localPosts = localPosts.filter(post => post.id !== selectedImage.id);
-                await AsyncStorage.setItem('LOCAL_POSTS', JSON.stringify(localPosts));
+              // Check which storage the image belongs to
+              const isLocalPost = selectedImage.id.startsWith('local_');
+              const storageKey = isLocalPost ? 'LOCAL_POSTS' : 'APPWRITE_POSTS';
 
-                // Update local state
-                setImages(localPosts);
+              console.log('📸 Gallery: Deleting from', storageKey, 'image ID:', selectedImage.id);
+
+              // Remove from the appropriate AsyncStorage
+              const rawPosts = await AsyncStorage.getItem(storageKey);
+              if (rawPosts) {
+                let posts = JSON.parse(rawPosts);
+                posts = posts.filter(post => post.id !== selectedImage.id);
+                await AsyncStorage.setItem(storageKey, JSON.stringify(posts));
+
+                // Reload images to reflect changes
+                await loadImages();
 
                 // Close modal
                 setModalVisible(false);
@@ -148,50 +178,33 @@ export default function GalleryScreen({ navigation }) {
   };
 
   const renderImageItem = ({ item }) => (
-    <TouchableOpacity onPress={() => handleImageSelect(item)}>
+    <TouchableOpacity onPress={() => handleImageSelect(item)} style={styles.imageItem}>
       <Image
         source={{ uri: item.uri }}
-        style={styles.thumbnail}
+        style={styles.gridImage}
       />
     </TouchableOpacity>
   );
 
-  const renderRegionSection = ({ item: region }) => (
-    <View style={styles.regionSection}>
-      <Text style={styles.regionTitle}>{region}</Text>
-      <FlatList
-        data={images.filter(img => img.address?.district === region || img.address?.city === region || img.address?.region === region || (!img.address && region === 'Local'))}
-        renderItem={renderImageItem}
-        horizontal
-        showsHorizontalScrollIndicator={false}
-        contentContainerStyle={styles.horizontalList}
-      />
-    </View>
-  );
+  const renderRegionSection = ({ item: region }) => {
+    const regionImages = images.filter(img => img.address?.district === region || img.address?.city === region || img.address?.region === region || (!img.address && region === 'Local'));
+    console.log(`📸 Gallery: Region "${region}" has ${regionImages.length} photos`);
 
-  const fetchComments = async (imageId) => {
-    setLoadingComments(true);
-    try {
-      // Replace with backend call if available, for now use empty array
-      // const res = await fetch(`${API_URL}/posts/${imageId}/comments`);
-      // const data = await res.json();
-      const data = []; 
-      setComments(data);
-    } catch (error) {
-      console.error('Error fetching comments:', error);
-      setComments([]);
-    } finally {
-      setLoadingComments(false);
-    }
+    return (
+      <View style={styles.regionSection}>
+        <Text style={styles.regionTitle}>{region} ({regionImages.length})</Text>
+        <FlatList
+          data={regionImages}
+          renderItem={renderImageItem}
+          keyExtractor={(item) => item.id}
+          numColumns={3}
+          contentContainerStyle={styles.gridContainer}
+        />
+      </View>
+    );
   };
 
-  const handleAddComment = () => {
-    if (!commentText.trim()) return;
-
-    const newComment = { text: commentText };
-    setComments(prev => [...prev, newComment]);
-    setCommentText('');
-  };
+  // Removed comment-related functions
 
 
 
@@ -250,47 +263,39 @@ export default function GalleryScreen({ navigation }) {
                   onChangeText={setEditedSuggestions}
                   placeholder="Edit AI suggestions..."
                 />
-                
-              ) : (
-                <Text style={styles.suggestions}>{editedSuggestions}</Text>
-              )}
-              <View style={{ marginTop: 10, width: '100%' }}>
-                <Text style={{ fontWeight: 'bold', marginBottom: 5 }}>Comments:</Text>
-                {loadingComments ? (
-                  <ActivityIndicator size="small" />
-                ) : (
-                  <ScrollView style={{ maxHeight: 100 }}>
-                    {comments.map((c, i) => (
-                      <Text key={i} style={{ marginBottom: 4 }}>• {c.text}</Text>
-                    ))}
-                  </ScrollView>
-                )}
-                <View style={{ flexDirection: 'row', marginTop: 5 }}>
-                  <TextInput
-                    value={commentText}
-                    onChangeText={setCommentText}
-                    placeholder="Add a comment..."
-                    style={{
-                      flex: 1,
-                      borderWidth: 1,
-                      borderColor: '#ccc',
-                      borderRadius: 8,
-                      paddingHorizontal: 10,
-                      height: 40,
-                    }}
-                  />
-                  <TouchableOpacity onPress={handleAddComment} style={{ marginLeft: 5, justifyContent: 'center' }}>
-                    <MaterialIcons name="send" size={24} color="#2196F3" />
-                  </TouchableOpacity>
-                </View>
-              </View>
 
+              ) : (
+                <Text style={styles.suggestions}>{selectedImage?.aiDescription || editedSuggestions}</Text>
+              )}
             </ScrollView>
 
             <View style={styles.actionButtons}>
               <TouchableOpacity
                 style={styles.actionButton}
-                onPress={() => setEditMode(!editMode)}
+                onPress={() => {
+                  if (editMode) {
+                    // Save changes
+                    const updatedImage = { ...selectedImage, aiDescription: editedSuggestions };
+                    // Update in AsyncStorage
+                    const storageKey = selectedImage.id.startsWith('local_') ? 'LOCAL_POSTS' : 'APPWRITE_POSTS';
+                    AsyncStorage.getItem(storageKey).then(raw => {
+                      if (raw) {
+                        let posts = JSON.parse(raw);
+                        posts = posts.map(p => p.id === selectedImage.id ? updatedImage : p);
+                        AsyncStorage.setItem(storageKey, JSON.stringify(posts)).then(() => {
+                          // Update the images array in state to reflect changes immediately
+                          setImages(prevImages =>
+                            prevImages.map(img => img.id === selectedImage.id ? updatedImage : img)
+                          );
+                          // Update selected image
+                          setSelectedImage(updatedImage);
+                          console.log('📸 Gallery: Caption updated for image:', selectedImage.id);
+                        });
+                      }
+                    });
+                  }
+                  setEditMode(!editMode);
+                }}
               >
                 <MaterialIcons
                   name={editMode ? "check" : "edit"}
@@ -302,13 +307,6 @@ export default function GalleryScreen({ navigation }) {
                 </Text>
               </TouchableOpacity>
 
-              <TouchableOpacity
-                style={styles.actionButton}
-                onPress={handleShare}
-              >
-                <MaterialIcons name="share" size={24} color="white" />
-                <Text style={styles.buttonText}>Share</Text>
-              </TouchableOpacity>
 
               <TouchableOpacity
                 style={styles.actionButton}
@@ -357,12 +355,19 @@ const styles = StyleSheet.create({
     fontWeight: 'bold',
     marginBottom: 10,
   },
-  thumbnail: {
-    width: 100,
-    height: 100,
-    marginRight: 10,
+  gridImage: {
+    width: (width - 40) / 3 - 10, // 3 columns with padding
+    height: (width - 40) / 3 - 10,
+    margin: 5,
     borderRadius: 8,
     resizeMode: 'cover',
+  },
+  imageItem: {
+    flex: 1/3,
+    alignItems: 'center',
+  },
+  gridContainer: {
+    paddingHorizontal: 10,
   },
   modalContainer: {
     flex: 1,
