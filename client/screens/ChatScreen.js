@@ -1,30 +1,15 @@
 import React, { useState, useEffect, useRef } from "react";
 import {
-  View,
-  Text,
-  StyleSheet,
-  Image,
-  FlatList,
-  TouchableOpacity,
-  TextInput,
-  KeyboardAvoidingView,
-  Platform,
+  View, Text, StyleSheet, Image, FlatList,
+  TouchableOpacity, TextInput, KeyboardAvoidingView, Platform
 } from "react-native";
 import { SafeAreaView } from 'react-native-safe-area-context';
 import {
-  doc,
-  collection,
-  query,
-  where,
-  orderBy,
-  getDocs,
-  onSnapshot,
-  setDoc,
-  updateDoc,
-  addDoc,
-  serverTimestamp,
+  doc, collection, query, where, orderBy,
+  getDocs, onSnapshot, setDoc, updateDoc, addDoc, serverTimestamp
 } from "firebase/firestore";
 import { auth, db } from "../firebaseConfig";
+import { callGemini } from "../services/gemini"; // Đảm bảo đúng đường dẫn
 
 export default function ChatScreen({ route, navigation }) {
   const { chatUser } = route.params;
@@ -32,22 +17,16 @@ export default function ChatScreen({ route, navigation }) {
   const [input, setInput] = useState("");
   const [chatId, setChatId] = useState(null);
   const flatListRef = useRef(null);
-
   const currentUid = auth.currentUser?.uid;
 
-  // Gửi tin nhắn
   const sendMessage = async () => {
     if (!chatUser || !input.trim()) return;
     let cid = chatId;
 
     if (!cid) {
-      const q = query(
-        collection(db, "chats"),
-        where("participants", "in", [
-          [currentUid, chatUser.id],
-          [chatUser.id, currentUid],
-        ])
-      );
+      const q = query(collection(db, "chats"), where("participants", "in", [
+        [currentUid, chatUser.id], [chatUser.id, currentUid]
+      ]));
       const snap = await getDocs(q);
       if (!snap.empty) {
         cid = snap.docs[0].id;
@@ -70,31 +49,52 @@ export default function ChatScreen({ route, navigation }) {
       createdAt: serverTimestamp(),
     });
 
-    const updateData = {
+    await updateDoc(doc(db, "chats", cid), {
       lastMessage: input,
       lastMessageTime: serverTimestamp(),
       lastMessageSender: currentUid,
-    };
-    updateData['lastRead.' + currentUid] = serverTimestamp();
-    await updateDoc(doc(db, "chats", cid), updateData);
+      [`lastRead.${currentUid}`]: serverTimestamp(),
+    });
+
+    await handleBotReply(input, cid);
 
     setInput("");
   };
 
-  // Lắng nghe tin nhắn trong chat hiện tại
+  const handleBotReply = async (userMessage, cid) => {
+  if (!cid || !userMessage.trim()) return;
+
+  console.log("📡 Gọi Gemini với:", userMessage);
+
+  const reply = await callGemini(userMessage);
+
+  console.log("🤖 Phản hồi từ Gemini:", reply);
+
+  if (reply) {
+    const msgRef = collection(db, "chats", cid, "messages");
+    await addDoc(msgRef, {
+      senderId: "chatbot",
+      text: reply,
+      createdAt: serverTimestamp(),
+    });
+
+    await updateDoc(doc(db, "chats", cid), {
+      lastMessage: reply,
+      lastMessageTime: serverTimestamp(),
+      lastMessageSender: "chatbot",
+    });
+  }
+};
+
+
   useEffect(() => {
     if (!chatUser || !currentUid) return;
-
     let unsub = () => {};
 
     const loadChat = async () => {
-      const q = query(
-        collection(db, "chats"),
-        where("participants", "in", [
-          [currentUid, chatUser.id],
-          [chatUser.id, currentUid],
-        ])
-      );
+      const q = query(collection(db, "chats"), where("participants", "in", [
+        [currentUid, chatUser.id], [chatUser.id, currentUid]
+      ]));
       const snap = await getDocs(q);
       let cid;
       if (!snap.empty) {
@@ -110,10 +110,9 @@ export default function ChatScreen({ route, navigation }) {
       }
       setChatId(cid);
 
-      // Đánh dấu đã đọc khi mở chat
-      const updateData = {};
-      updateData['lastRead.' + currentUid] = serverTimestamp();
-      await updateDoc(doc(db, "chats", cid), updateData);
+      await updateDoc(doc(db, "chats", cid), {
+        [`lastRead.${currentUid}`]: serverTimestamp(),
+      });
 
       const msgRef = collection(db, "chats", cid, "messages");
       const qq = query(msgRef, orderBy("createdAt", "asc"));
@@ -125,7 +124,6 @@ export default function ChatScreen({ route, navigation }) {
     };
 
     loadChat();
-
     return () => {
       unsub();
       setMessages([]);
@@ -140,12 +138,7 @@ export default function ChatScreen({ route, navigation }) {
           <Text style={styles.backButtonText}>←</Text>
         </TouchableOpacity>
         <View style={styles.headerInfo}>
-          <Image
-            source={{
-              uri: chatUser?.avatar || "https://cdn-icons-png.flaticon.com/512/3177/3177440.png",
-            }}
-            style={styles.avatar}
-          />
+          <Image source={{ uri: chatUser?.avatar || "https://cdn-icons-png.flaticon.com/512/3177/3177440.png" }} style={styles.avatar} />
           <Text style={styles.headerTitle}>{chatUser?.name || "Chat"}</Text>
         </View>
       </View>
@@ -156,12 +149,14 @@ export default function ChatScreen({ route, navigation }) {
         keyExtractor={(item) => item.id}
         contentContainerStyle={styles.messagesList}
         renderItem={({ item }) => (
-          <View
-            style={[
-              styles.messageBubble,
-              item.senderId === currentUid ? styles.myMessage : styles.theirMessage,
-            ]}
-          >
+          <View style={[
+            styles.messageBubble,
+            item.senderId === currentUid
+              ? styles.myMessage
+              : item.senderId === "chatbot"
+              ? styles.botMessage
+              : styles.theirMessage,
+          ]}>
             <Text style={styles.messageText}>{item.text}</Text>
           </View>
         )}
@@ -179,19 +174,20 @@ export default function ChatScreen({ route, navigation }) {
             value={input}
             onChangeText={setInput}
             onSubmitEditing={sendMessage}
+            returnKeyType="send"
           />
-          <TouchableOpacity 
+          <TouchableOpacity
             style={[styles.sendButton, !input.trim() && styles.sendButtonDisabled]}
             onPress={sendMessage}
             disabled={!input.trim()}
           >
-            <Text style={styles.sendButtonText}>Gửi</Text>
+            <Text style={styles.sendButtonText}>📩</Text>
           </TouchableOpacity>
         </View>
       </KeyboardAvoidingView>
     </SafeAreaView>
   );
-}
+  }
 
 const styles = StyleSheet.create({
   container: {
@@ -286,4 +282,10 @@ const styles = StyleSheet.create({
     fontSize: 16,
     fontWeight: '600',
   },
+  botMessage: {
+  alignSelf: 'flex-start',
+  backgroundColor: '#e0f7fa',
+  borderWidth: 1,
+  borderColor: '#b2ebf2',
+}
 });
