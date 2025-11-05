@@ -32,6 +32,8 @@ import {
   setDoc,
   serverTimestamp,
   increment,
+  arrayUnion,
+  arrayRemove,
 } from "firebase/firestore";
 import { auth, db } from "../firebaseConfig";
 import * as Location from "expo-location";
@@ -65,6 +67,11 @@ export default function ProfileScreen() {
   const [selectedPost, setSelectedPost] = useState(null);
   const [likedPosts, setLikedPosts] = useState([]);
   const [loadingLikedPosts, setLoadingLikedPosts] = useState(false);
+  const [userPosts, setUserPosts] = useState([]);
+  const [loadingUserPosts, setLoadingUserPosts] = useState(false);
+  const [selectedPost, setSelectedPost] = useState(null);
+  const [showPostModal, setShowPostModal] = useState(false);
+  const [refreshTrigger, setRefreshTrigger] = useState(0);
   const maritalOptions = [
     'Độc thân',
     'Hẹn hò',
@@ -398,25 +405,61 @@ export default function ProfileScreen() {
     setInput("");
   };
 
-  // Load liked posts when "liked" tab is selected with realtime updates
+  // Load user's own posts when "posts" tab is selected
+  useEffect(() => {
+    if (!profile || !currentUid || tab !== "posts") {
+      setUserPosts([]);
+      setLoadingUserPosts(false);
+      return;
+    }
+
+    setLoadingUserPosts(true);
+
+    // Fetch posts once instead of listening (to avoid Firestore conflicts)
+    const loadUserPosts = async () => {
+      try {
+        const q = query(
+          collection(db, "posts"),
+          orderBy("createdAt", "desc")
+        );
+
+        const snapshot = await getDocs(q);
+        const allPosts = snapshot.docs.map(d => ({ id: d.id, ...d.data() }));
+        // Filter posts by current user
+        const userPosts = allPosts.filter(post => post.author?.id === currentUid);
+        setUserPosts(userPosts);
+      } catch (err) {
+        console.error("Error loading user posts:", err);
+        setUserPosts([]);
+      } finally {
+        setLoadingUserPosts(false);
+      }
+    };
+
+    loadUserPosts();
+  }, [profile, tab, currentUid, refreshTrigger]);
+
+  // Load liked posts when "liked" tab is selected
   useEffect(() => {
     if (!profile || !currentUid || tab !== "liked") {
       setLikedPosts([]);
+      setLoadingLikedPosts(false);
       return;
     }
 
     setLoadingLikedPosts(true);
 
-    // Listen to user document for likedPosts changes
-    const unsubUser = onSnapshot(doc(db, "users", currentUid), async (userSnap) => {
+    // Fetch liked posts once (to avoid Firestore conflicts)
+    const loadLikedPosts = async () => {
       try {
-        if (!userSnap.exists()) {
+        const userDoc = await getDoc(doc(db, "users", currentUid));
+        if (!userDoc.exists()) {
           setLikedPosts([]);
           setLoadingLikedPosts(false);
           return;
         }
 
-        const likedPostIds = userSnap.data()?.likedPosts || [];
+        const likedPostIds = userDoc.data()?.likedPosts || [];
         if (!Array.isArray(likedPostIds) || likedPostIds.length === 0) {
           setLikedPosts([]);
           setLoadingLikedPosts(false);
@@ -432,16 +475,16 @@ export default function ProfileScreen() {
           .map(d => ({ id: d.id, ...d.data() }));
 
         setLikedPosts(posts);
-        setLoadingLikedPosts(false);
       } catch (err) {
         console.error("Error loading liked posts:", err);
         setLikedPosts([]);
+      } finally {
         setLoadingLikedPosts(false);
       }
-    });
+    };
 
-    return () => unsubUser();
-  }, [profile, tab, currentUid]);
+    loadLikedPosts();
+  }, [profile, tab, currentUid, refreshTrigger]);
 
   // Lắng nghe tin nhắn trong chat hiện tại
   useEffect(() => {
@@ -668,6 +711,185 @@ export default function ProfileScreen() {
     );
   };
 
+  // Post Detail Modal Component
+  const PostDetailModal = () => {
+    if (!selectedPost) return null;
+
+    const [liked, setLiked] = useState(selectedPost.likedBy?.includes(currentUid) || false);
+    const [likeCount, setLikeCount] = useState(selectedPost.likes || 0);
+    const [following, setFollowing] = useState(false);
+    const [checkingFollow, setCheckingFollow] = useState(true);
+
+    const isOwnPost = selectedPost.author?.id === currentUid;
+
+    // Check if already following
+    useEffect(() => {
+      const checkFollowing = async () => {
+        if (isOwnPost || !currentUid) {
+          setCheckingFollow(false);
+          return;
+        }
+
+        try {
+          const userDoc = await getDoc(doc(db, "users", currentUid));
+          if (userDoc.exists()) {
+            const followingList = userDoc.data()?.following || [];
+            setFollowing(followingList.includes(selectedPost.author?.id));
+          }
+        } catch (err) {
+          console.error("Error checking follow status:", err);
+        } finally {
+          setCheckingFollow(false);
+        }
+      };
+
+      checkFollowing();
+    }, [selectedPost, currentUid, isOwnPost]);
+
+    const handleToggleLike = async () => {
+      const newLiked = !liked;
+      const previousLiked = liked;
+      const previousLikeCount = likeCount;
+
+      setLiked(newLiked);
+      setLikeCount(prev => newLiked ? prev + 1 : Math.max(0, prev - 1));
+
+      try {
+        const postRef = doc(db, 'posts', selectedPost.id);
+
+        if (newLiked) {
+          await updateDoc(postRef, {
+            likes: increment(1),
+            likedBy: arrayUnion(currentUid)
+          });
+
+          const userRef = doc(db, 'users', currentUid);
+          await updateDoc(userRef, {
+            likedPosts: arrayUnion(selectedPost.id),
+            likeCount: increment(1)
+          });
+        } else {
+          await updateDoc(postRef, {
+            likes: increment(-1),
+            likedBy: arrayRemove(currentUid)
+          });
+
+          const userRef = doc(db, 'users', currentUid);
+          await updateDoc(userRef, {
+            likedPosts: arrayRemove(selectedPost.id),
+            likeCount: increment(-1)
+          });
+        }
+
+        // Refresh the lists after like/unlike
+        setRefreshTrigger(prev => prev + 1);
+      } catch (error) {
+        console.error('Error toggling like:', error);
+        setLiked(previousLiked);
+        setLikeCount(previousLikeCount);
+        Alert.alert('Lỗi', 'Không thể cập nhật like');
+      }
+    };
+
+    const handleToggleFollow = async () => {
+      if (isOwnPost || !selectedPost.author?.id) return;
+
+      const newFollowing = !following;
+      setFollowing(newFollowing);
+
+      try {
+        const userRef = doc(db, "users", currentUid);
+        const authorRef = doc(db, "users", selectedPost.author.id);
+
+        if (newFollowing) {
+          await updateDoc(userRef, {
+            following: arrayUnion(selectedPost.author.id)
+          });
+          await updateDoc(authorRef, {
+            followers: increment(1)
+          });
+        } else {
+          await updateDoc(userRef, {
+            following: arrayRemove(selectedPost.author.id)
+          });
+          await updateDoc(authorRef, {
+            followers: increment(-1)
+          });
+        }
+      } catch (error) {
+        console.error('Error toggling follow:', error);
+        setFollowing(!newFollowing);
+        Alert.alert('Lỗi', 'Không thể cập nhật theo dõi');
+      }
+    };
+
+    return (
+      <Modal visible={showPostModal} transparent animationType="fade">
+        <View style={styles.postModalOverlay}>
+          <View style={styles.postModalContent}>
+            <TouchableOpacity
+              style={styles.postModalClose}
+              onPress={() => {
+                setShowPostModal(false);
+                // Refresh data when closing modal
+                setRefreshTrigger(prev => prev + 1);
+              }}
+            >
+              <Text style={styles.postModalCloseText}>✕</Text>
+            </TouchableOpacity>
+
+            <ScrollView showsVerticalScrollIndicator={false}>
+              {/* Author Info */}
+              <View style={styles.postModalAuthor}>
+                <Image
+                  source={{ uri: selectedPost.author?.avatar || "https://cdn-icons-png.flaticon.com/512/3177/3177440.png" }}
+                  style={styles.postModalAvatar}
+                />
+                <View style={styles.postModalAuthorInfo}>
+                  <Text style={styles.postModalAuthorName}>{selectedPost.author?.name || "Người dùng"}</Text>
+                </View>
+                {!isOwnPost && !checkingFollow && (
+                  <TouchableOpacity
+                    style={[styles.postModalFollowBtn, following && styles.postModalFollowingBtn]}
+                    onPress={handleToggleFollow}
+                  >
+                    <Text style={[styles.postModalFollowText, following && styles.postModalFollowingText]}>
+                      {following ? "✓ Đang theo dõi" : "+ Theo dõi"}
+                    </Text>
+                  </TouchableOpacity>
+                )}
+              </View>
+
+              {/* Image */}
+              <Image
+                source={{ uri: selectedPost.image || "https://via.placeholder.com/400" }}
+                style={styles.postModalImage}
+                resizeMode="cover"
+              />
+
+              {/* Title & Description */}
+              <View style={styles.postModalInfo}>
+                <Text style={styles.postModalTitle}>{selectedPost.title}</Text>
+                <Text style={styles.postModalDescription}>{selectedPost.description}</Text>
+              </View>
+
+              {/* Actions */}
+              <View style={styles.postModalActions}>
+                <TouchableOpacity
+                  style={styles.postModalActionBtn}
+                  onPress={handleToggleLike}
+                >
+                  <Text style={styles.postModalActionIcon}>{liked ? "❤️" : "🤍"}</Text>
+                  <Text style={styles.postModalActionText}>{likeCount} lượt thích</Text>
+                </TouchableOpacity>
+              </View>
+            </ScrollView>
+          </View>
+        </View>
+      </Modal>
+    );
+  };
+
   const renderTabContent = () => {
     if (tab === "friends") {
       if (!Array.isArray(friends)) {
@@ -726,11 +948,11 @@ export default function ProfileScreen() {
     }
 
     if (tab === "posts") {
-      if (loadingPosts) {
+      if (loadingUserPosts) {
         return (
           <View style={styles.emptyContainer}>
             <ActivityIndicator size="large" color="#2196F3" />
-            <Text style={{ marginTop: 10 }}>Đang tải bài đăng...</Text>
+            <Text style={styles.emptyText}>Đang tải...</Text>
           </View>
         );
       }
@@ -740,15 +962,22 @@ export default function ProfileScreen() {
           data={userPosts}
           keyExtractor={(item) => item.id}
           numColumns={3}
-          contentContainerStyle={{ padding: 2 }}
+          contentContainerStyle={styles.likedPostsContainer}
           renderItem={({ item }) => (
-            <TouchableOpacity style={{ flex: 1/3, aspectRatio: 1, padding: 2 }}
-              onPress={() => setSelectedPost(item)}>
+            <TouchableOpacity
+              style={styles.likedPostItem}
+              onPress={() => {
+                setSelectedPost(item);
+                setShowPostModal(true);
+              }}
+            >
               <Image
-                source={{ uri: item.uri }}
-                style={{ width: '100%', height: '100%', borderRadius: 4 }}
-                resizeMode="cover"
+                source={{ uri: item.image || "https://via.placeholder.com/150" }}
+                style={styles.likedPostImage}
               />
+              <View style={styles.likedPostOverlay}>
+                <Text style={styles.likedPostLikes}>❤️ {item.likes || 0}</Text>
+              </View>
             </TouchableOpacity>
           )}
         />
@@ -776,7 +1005,13 @@ export default function ProfileScreen() {
           numColumns={3}
           contentContainerStyle={styles.likedPostsContainer}
           renderItem={({ item }) => (
-            <TouchableOpacity style={styles.likedPostItem}>
+            <TouchableOpacity
+              style={styles.likedPostItem}
+              onPress={() => {
+                setSelectedPost(item);
+                setShowPostModal(true);
+              }}
+            >
               <Image
                 source={{ uri: item.image || "https://via.placeholder.com/150" }}
                 style={styles.likedPostImage}
@@ -814,6 +1049,7 @@ export default function ProfileScreen() {
       />
 
       <EditProfileModal />
+      <PostDetailModal />
 
       {/* CHAT MODAL */}
       <Modal visible={!!chatUser} animationType="slide">
@@ -1577,6 +1813,117 @@ const styles = StyleSheet.create({
     fontSize: 12,
     fontWeight: "600",
     textAlign: "center",
+  },
+
+  // Post Detail Modal Styles
+  postModalOverlay: {
+    flex: 1,
+    backgroundColor: "rgba(0, 0, 0, 0.8)",
+    justifyContent: "center",
+    alignItems: "center",
+  },
+  postModalContent: {
+    backgroundColor: "#fff",
+    borderRadius: 16,
+    width: "90%",
+    maxHeight: "85%",
+    position: "relative",
+  },
+  postModalClose: {
+    position: "absolute",
+    top: 12,
+    right: 12,
+    zIndex: 10,
+    backgroundColor: "rgba(0, 0, 0, 0.5)",
+    borderRadius: 20,
+    width: 36,
+    height: 36,
+    justifyContent: "center",
+    alignItems: "center",
+  },
+  postModalCloseText: {
+    color: "#fff",
+    fontSize: 20,
+    fontWeight: "bold",
+  },
+  postModalAuthor: {
+    flexDirection: "row",
+    alignItems: "center",
+    padding: 16,
+    borderBottomWidth: 1,
+    borderBottomColor: "#eee",
+  },
+  postModalAvatar: {
+    width: 44,
+    height: 44,
+    borderRadius: 22,
+    marginRight: 12,
+  },
+  postModalAuthorInfo: {
+    flex: 1,
+  },
+  postModalAuthorName: {
+    fontSize: 16,
+    fontWeight: "600",
+    color: "#333",
+  },
+  postModalFollowBtn: {
+    backgroundColor: "#2196F3",
+    paddingHorizontal: 16,
+    paddingVertical: 8,
+    borderRadius: 20,
+  },
+  postModalFollowingBtn: {
+    backgroundColor: "#fff",
+    borderWidth: 1,
+    borderColor: "#2196F3",
+  },
+  postModalFollowText: {
+    color: "#fff",
+    fontSize: 13,
+    fontWeight: "600",
+  },
+  postModalFollowingText: {
+    color: "#2196F3",
+  },
+  postModalImage: {
+    width: "100%",
+    height: 350,
+    backgroundColor: "#f0f0f0",
+  },
+  postModalInfo: {
+    padding: 16,
+  },
+  postModalTitle: {
+    fontSize: 18,
+    fontWeight: "bold",
+    color: "#333",
+    marginBottom: 8,
+  },
+  postModalDescription: {
+    fontSize: 15,
+    color: "#666",
+    lineHeight: 22,
+  },
+  postModalActions: {
+    flexDirection: "row",
+    padding: 16,
+    borderTopWidth: 1,
+    borderTopColor: "#eee",
+  },
+  postModalActionBtn: {
+    flexDirection: "row",
+    alignItems: "center",
+    marginRight: 24,
+  },
+  postModalActionIcon: {
+    fontSize: 24,
+    marginRight: 8,
+  },
+  postModalActionText: {
+    fontSize: 15,
+    color: "#333",
+    fontWeight: "500",
   },
 
   modalOverlay: {

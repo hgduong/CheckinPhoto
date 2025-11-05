@@ -12,9 +12,27 @@ import {
   Modal,
   ActivityIndicator,
   Alert,
+  Dimensions,
+  TextInput,
 } from "react-native";
-import { MaterialIcons } from '@expo/vector-icons';
-import { collection, onSnapshot, query, orderBy, doc, updateDoc, arrayUnion, arrayRemove, getDoc, getDocs, deleteDoc, increment } from "firebase/firestore";
+import { addDoc } from "firebase/firestore";
+
+const { width } = Dimensions.get("window");
+import { MaterialIcons } from "@expo/vector-icons";
+import {
+  collection,
+  onSnapshot,
+  query,
+  orderBy,
+  doc,
+  updateDoc,
+  arrayUnion,
+  arrayRemove,
+  getDoc,
+  getDocs,
+  deleteDoc,
+  increment,
+} from "firebase/firestore";
 import { db } from "../firebaseConfig";
 import { auth } from "../firebaseConfig";
 
@@ -26,25 +44,26 @@ import Share from "../assets/share.png";
 // Dynamic user list for stories - loaded from Profile following
 
 // Component hiển thị user ngang
-const UserCircle = ({ user, navigation }) => {
+const UserCircle = ({ user, onPress }) => {
   const getActiveStatus = () => {
     const now = Date.now();
     const diffMinutes = Math.floor((now - user.lastActive) / 60000);
 
     if (diffMinutes < 3) {
-      return { status: 'active', text: 'Đang hoạt động' };
+      return { status: "active", text: "Đang hoạt động" };
     } else {
-      return { status: 'inactive', text: `Không hoạt động ${diffMinutes} phút` };
+      return {
+        status: "inactive",
+        text: `Không hoạt động ${diffMinutes} phút`,
+      };
     }
   };
 
   const activeStatus = getActiveStatus();
 
   const handlePress = () => {
-    // Navigate to user's profile
-    if (navigation) {
-      console.log('Navigate to user profile:', user.id);
-      navigation.navigate('Profile', { userId: user.id, userName: user.name });
+    if (onPress) {
+      onPress(user);
     }
   };
 
@@ -52,16 +71,33 @@ const UserCircle = ({ user, navigation }) => {
     <TouchableOpacity style={styles.userItem} onPress={handlePress}>
       <View style={styles.avatarWrapper}>
         <Image source={{ uri: user.avatar }} style={styles.userAvatar} />
-        <View style={[styles.postBadge, activeStatus.status === 'active' && styles.activeBadge]}>
-          <Text style={[styles.postCount, activeStatus.status === 'active' && styles.activeText]}>
+        <View
+          style={[
+            styles.postBadge,
+            activeStatus.status === "active" && styles.activeBadge,
+          ]}
+        >
+          <Text
+            style={[
+              styles.postCount,
+              activeStatus.status === "active" && styles.activeText,
+            ]}
+          >
             {user.postCount}
           </Text>
         </View>
-        {activeStatus.status === 'active' && <View style={styles.onlineIndicator} />}
+        {activeStatus.status === "active" && (
+          <View style={styles.onlineIndicator} />
+        )}
       </View>
       <Text style={styles.userName}>{user.name.split(" ")[0]}</Text>
-      <Text style={[styles.activeStatus, activeStatus.status === 'inactive' && styles.inactiveStatus]}>
-        {activeStatus.status === 'active' ? '●' : activeStatus.text}
+      <Text
+        style={[
+          styles.activeStatus,
+          activeStatus.status === "inactive" && styles.inactiveStatus,
+        ]}
+      >
+        {activeStatus.status === "active" ? "●" : activeStatus.text}
       </Text>
     </TouchableOpacity>
   );
@@ -69,14 +105,51 @@ const UserCircle = ({ user, navigation }) => {
 
 // Component hiển thị từng ảnh
 const PhotoCard = ({ item, currentUserId }) => {
-  const [liked, setLiked] = useState(item.likedBy?.includes(currentUserId) || false);
+  const [liked, setLiked] = useState(
+    item.likedBy?.includes(currentUserId) || false
+  );
   const [likeCount, setLikeCount] = useState(item.likes || 0);
   const [showShareModal, setShowShareModal] = useState(false);
   const [showLocationModal, setShowLocationModal] = useState(false);
-  const [following, setFollowing] = useState(false); // TODO: Check from Firebase
+  const [following, setFollowing] = useState(false);
+  const [checkingFollow, setCheckingFollow] = useState(true);
+  const latitude = item.location?.coordinates?.[1];
+  const longitude = item.location?.coordinates?.[0];
 
   const scaleAnim = useState(new Animated.Value(1))[0];
   const isOwnPost = item.author?.id === currentUserId;
+  const [commentCount, setCommentCount] = useState(0);
+  const [commentAuthors, setCommentAuthors] = useState([]);
+
+  // Update local state when item changes from Firebase
+  useEffect(() => {
+    setLiked(item.likedBy?.includes(currentUserId) || false);
+    setLikeCount(item.likes || 0);
+  }, [item.likes, item.likedBy, currentUserId]);
+
+  // Check if already following this user
+  useEffect(() => {
+    const checkFollowing = async () => {
+      if (isOwnPost || !currentUserId || !item.author?.id) {
+        setCheckingFollow(false);
+        return;
+      }
+
+      try {
+        const userDoc = await getDoc(doc(db, "users", currentUserId));
+        if (userDoc.exists()) {
+          const followingList = userDoc.data()?.following || [];
+          setFollowing(followingList.includes(item.author.id));
+        }
+      } catch (err) {
+        console.error("Error checking follow status:", err);
+      } finally {
+        setCheckingFollow(false);
+      }
+    };
+
+    checkFollowing();
+  }, [item.author?.id, currentUserId, isOwnPost]);
 
   const toggleLike = async () => {
     const newLiked = !liked;
@@ -86,7 +159,7 @@ const PhotoCard = ({ item, currentUserId }) => {
 
     // Always update local state first for immediate UI feedback
     setLiked(newLiked);
-    setLikeCount(prev => newLiked ? prev + 1 : Math.max(0, prev - 1));
+    setLikeCount((prev) => (newLiked ? prev + 1 : Math.max(0, prev - 1)));
 
     // Animation
     Animated.sequence([
@@ -105,13 +178,16 @@ const PhotoCard = ({ item, currentUserId }) => {
     ]).start();
 
     try {
-      console.log('🔥 Home: Attempting to like post:', item.id);
-      const postRef = doc(db, 'posts', item.id);
+      console.log("🔥 Home: Attempting to like post:", item.id);
+      const postRef = doc(db, "posts", item.id);
 
       // Check if document exists first
       const docSnap = await getDoc(postRef);
       if (!docSnap.exists()) {
-        console.log('🔥 Home: Post document does not exist, using local state only:', item.id);
+        console.log(
+          "🔥 Home: Post document does not exist, using local state only:",
+          item.id
+        );
         return;
       }
 
@@ -120,65 +196,104 @@ const PhotoCard = ({ item, currentUserId }) => {
           // Add like to post
           await updateDoc(postRef, {
             likes: currentLikes + 1,
-            likedBy: arrayUnion(currentUserId)
+            likedBy: arrayUnion(currentUserId),
           });
-          console.log('🔥 Home: Added like to post:', item.id);
+          console.log("🔥 Home: Added like to post:", item.id);
 
           // Add post to user's likedPosts and increment likeCount
-          const userRef = doc(db, 'users', currentUserId);
+          const userRef = doc(db, "users", currentUserId);
           await updateDoc(userRef, {
             likedPosts: arrayUnion(item.id),
-            likeCount: increment(1)
+            likeCount: increment(1),
           });
-          console.log('🔥 Home: Added post to user likedPosts:', item.id);
-          console.log('✅ Home: Like saved successfully to Firebase');
+          console.log("🔥 Home: Added post to user likedPosts:", item.id);
+          console.log("✅ Home: Like saved successfully to Firebase");
         } else {
           // Remove like from post
           await updateDoc(postRef, {
             likes: Math.max(0, currentLikes - 1),
-            likedBy: arrayRemove(currentUserId)
+            likedBy: arrayRemove(currentUserId),
           });
-          console.log('🔥 Home: Removed like from post:', item.id);
+          console.log("🔥 Home: Removed like from post:", item.id);
 
           // Remove post from user's likedPosts and decrement likeCount
-          const userRef = doc(db, 'users', currentUserId);
+          const userRef = doc(db, "users", currentUserId);
           await updateDoc(userRef, {
             likedPosts: arrayRemove(item.id),
-            likeCount: increment(-1)
+            likeCount: increment(-1),
           });
-          console.log('🔥 Home: Removed post from user likedPosts:', item.id);
-          console.log('✅ Home: Unlike saved successfully to Firebase');
+          console.log("🔥 Home: Removed post from user likedPosts:", item.id);
+          console.log("✅ Home: Unlike saved successfully to Firebase");
         }
       } else {
-        console.log('🔥 Home: No currentUserId, skipping Firebase update');
+        console.log("🔥 Home: No currentUserId, skipping Firebase update");
       }
-
     } catch (error) {
-      console.error('❌ Error toggling like:', error);
+      console.error("❌ Error toggling like:", error);
       // Rollback local state on error
       setLiked(previousLiked);
       setLikeCount(previousLikeCount);
-      Alert.alert('Lỗi', 'Không thể cập nhật like. Vui lòng thử lại.');
+      Alert.alert("Lỗi", "Không thể cập nhật like. Vui lòng thử lại.");
+    }
+  };
+  // modal cmt real time
+  const [showCommentModal, setShowCommentModal] = useState(false);
+  const [comments, setComments] = useState([]);
+  const [newComment, setNewComment] = useState("");
+
+  useEffect(() => {
+    const q = query(
+      collection(db, "posts", item.id, "comments"),
+      orderBy("createdAt", "asc")
+    );
+
+    const unsubscribe = onSnapshot(q, (snapshot) => {
+      const data = snapshot.docs.map((doc) => ({ id: doc.id, ...doc.data() }));
+      setComments(data);
+      setCommentCount(data.length);
+
+      // Lấy tên người bình luận (không trùng lặp)
+      const names = [...new Set(data.map((c) => c.authorName))];
+      setCommentAuthors(names);
+    });
+
+    return () => unsubscribe();
+  }, []);
+
+  const handleSendComment = async () => {
+    if (!newComment.trim()) return;
+
+    try {
+      await addDoc(collection(db, "posts", item.id, "comments"), {
+        text: newComment,
+        authorId: currentUserId,
+        authorName: auth.currentUser.displayName || "Ẩn danh",
+        createdAt: new Date(),
+      });
+      setNewComment("");
+    } catch (err) {
+      console.error("Lỗi gửi bình luận:", err);
+      Alert.alert("Lỗi", "Không thể gửi bình luận");
     }
   };
 
   const handleDeletePost = async () => {
     Alert.alert(
-      'Xóa bài viết',
-      'Bạn có chắc muốn xóa bài viết này không?',
+      "Xóa bài viết",
+      "Bạn có chắc muốn xóa bài viết này không?",
       [
-        { text: 'Hủy', style: 'cancel' },
+        { text: "Hủy", style: "cancel" },
         {
-          text: 'Xóa',
-          style: 'destructive',
+          text: "Xóa",
+          style: "destructive",
           onPress: async () => {
             try {
-              const postRef = doc(db, 'posts', item.id);
+              const postRef = doc(db, "posts", item.id);
               await deleteDoc(postRef);
-              console.log('🔥 Home: Deleted post:', item.id);
+              console.log("🔥 Home: Deleted post:", item.id);
             } catch (error) {
-              console.error('Error deleting post:', error);
-              Alert.alert('Lỗi', 'Không thể xóa bài viết');
+              console.error("Error deleting post:", error);
+              Alert.alert("Lỗi", "Không thể xóa bài viết");
             }
           },
         },
@@ -188,53 +303,36 @@ const PhotoCard = ({ item, currentUserId }) => {
   };
 
   const toggleFollow = async () => {
+    if (isOwnPost || !item.author?.id || !currentUserId) return;
+
+    const newFollowing = !following;
+    setFollowing(newFollowing);
+
     try {
-      console.log('🔥 Home: toggleFollow called for post author:', item.author?.id);
-      if (!currentUserId || !item.author?.id) {
-        console.log('🔥 Home: Missing currentUserId or author ID');
-        return;
-      }
+      const userRef = doc(db, "users", currentUserId);
+      const authorRef = doc(db, "users", item.author.id);
 
-      const userRef = doc(db, 'users', currentUserId);
-      const targetUserRef = doc(db, 'users', item.author.id);
-
-      const userSnap = await getDoc(userRef);
-      const targetSnap = await getDoc(targetUserRef);
-
-      if (!userSnap.exists() || !targetSnap.exists()) {
-        console.log('🔥 Home: User or target user document does not exist');
-        return;
-      }
-
-      const currentFollowing = userSnap.data()?.following || [];
-      const isFollowing = currentFollowing.includes(item.author.id);
-
-      console.log('🔥 Home: Currently following:', isFollowing);
-
-      if (isFollowing) {
-        // Unfollow
+      if (newFollowing) {
         await updateDoc(userRef, {
-          following: arrayRemove(item.author.id)
+          following: arrayUnion(item.author.id),
         });
-        await updateDoc(targetUserRef, {
-          followers: Math.max((targetSnap.data()?.followers || 0) - 1, 0)
+        await updateDoc(authorRef, {
+          followers: increment(1),
         });
-        console.log('🔥 Home: Unfollowed user:', item.author.id);
+        console.log("✅ Home: Followed user:", item.author.id);
       } else {
-        // Follow
         await updateDoc(userRef, {
-          following: arrayUnion(item.author.id)
+          following: arrayRemove(item.author.id),
         });
-        await updateDoc(targetUserRef, {
-          followers: (targetSnap.data()?.followers || 0) + 1
+        await updateDoc(authorRef, {
+          followers: increment(-1),
         });
-        console.log('🔥 Home: Followed user:', item.author.id);
+        console.log("✅ Home: Unfollowed user:", item.author.id);
       }
-
-      setFollowing(!isFollowing);
-      console.log('✅ Home: Follow toggle completed');
     } catch (error) {
-      console.error('❌ Home: Error toggling follow:', error);
+      console.error("❌ Error toggling follow:", error);
+      setFollowing(!newFollowing);
+      Alert.alert("Lỗi", "Không thể cập nhật theo dõi");
     }
   };
 
@@ -253,91 +351,126 @@ const PhotoCard = ({ item, currentUserId }) => {
     <View style={styles.cardWrapper}>
       <View style={styles.card}>
         <View style={styles.authorRow}>
-          <Image 
-            source={{ 
-              uri: item.author?.avatar || 'https://cdn-icons-png.flaticon.com/512/3177/3177440.png'
-            }} 
-            style={styles.avatar} 
-            defaultSource={require('../assets/favicon.png')} 
+          <Image
+            source={{
+              uri:
+                item.author?.avatar ||
+                "https://cdn-icons-png.flaticon.com/512/3177/3177440.png",
+            }}
+            style={styles.avatar}
+            defaultSource={require("../assets/favicon.png")}
           />
           <View style={styles.authorInfo}>
-            <Text style={styles.authorName}>{item.author?.name || 'Người dùng'}</Text>
-            {!isOwnPost && (
+            <Text style={styles.authorName}>
+              {item.author?.name || "Người dùng"}
+            </Text>
+            {!isOwnPost && !checkingFollow && (
               <TouchableOpacity
-                style={[styles.followButton, following && styles.followingButton]}
+                style={[
+                  styles.followButton,
+                  following && styles.followingButton,
+                ]}
                 onPress={toggleFollow}
               >
-                <Text style={[styles.followText, following && styles.followingText]}>
-                  {following ? '✓ Đang theo dõi' : '+ Theo dõi'}
+                <Text
+                  style={[styles.followText, following && styles.followingText]}
+                >
+                  {following ? "✓ Đang theo dõi" : "+ Theo dõi"}
                 </Text>
               </TouchableOpacity>
             )}
           </View>
         </View>
-        <Image source={{ uri: item.image || 'https://via.placeholder.com/300x300?text=No+Image' }} style={styles.image} />
+        <Image
+          source={{
+            uri:
+              item.image || "https://via.placeholder.com/300x300?text=No+Image",
+          }}
+          style={styles.image}
+        />
         <Text style={styles.title}>{item.title}</Text>
         <Text style={styles.description}>{item.description}</Text>
         <View style={styles.actionRow}>
-           <TouchableOpacity style={styles.actionButton} onPress={toggleLike}>
-             <Animated.Image
-               source={liked ? RedHeart : WhiteHeart}
-               style={[styles.heartIcon, { transform: [{ scale: scaleAnim }] }]}
-               resizeMode="contain"
-             />
-             <Text style={styles.count}>{likeCount}</Text>
-           </TouchableOpacity>
+          <TouchableOpacity style={styles.actionButton} onPress={toggleLike}>
+            <Animated.Image
+              source={liked ? RedHeart : WhiteHeart}
+              style={[styles.heartIcon, { transform: [{ scale: scaleAnim }] }]}
+              resizeMode="contain"
+            />
+            <Text style={styles.count}>{likeCount}</Text>
+          </TouchableOpacity>
 
-           <TouchableOpacity style={styles.actionButton} onPress={() => setShowShareModal(true)}>
-             <Image source={Share} style={styles.iconImage} resizeMode="contain" />
-             <Text style={styles.count}>{item.shares || 0}</Text>
-           </TouchableOpacity>
+          <TouchableOpacity style={styles.actionButton} onPress={() => setShowCommentModal(true)}>
+  <Text style={{ fontSize: 21 }}>💬</Text>
+  <Text style={styles.count}>{commentCount}</Text>
+</TouchableOpacity>
 
-           <TouchableOpacity style={styles.actionButton} onPress={() => navigation.navigate('Map')}>
+
+          {/* <TouchableOpacity style={styles.actionButton} onPress={() => setShowLocationModal(true)}>
              <Image source={Location} style={styles.iconImage} resizeMode="contain" />
              <Text style={styles.count}>{item.maps || 0}</Text>
-           </TouchableOpacity>
+           </TouchableOpacity> */}
 
-           {isOwnPost && (
-             <TouchableOpacity style={[styles.actionButton, styles.deleteButton]} onPress={handleDeletePost}>
-               <MaterialIcons name="delete" size={20} color="white" />
-               <Text style={styles.buttonText}>Xóa</Text>
-             </TouchableOpacity>
-           )}
-         </View>
+          {isOwnPost && (
+            <TouchableOpacity
+              style={[styles.actionButton, styles.deleteButton]}
+              onPress={handleDeletePost}
+            >
+              <MaterialIcons name="delete" size={20} color="white" />
+              <Text style={styles.buttonText}>Xóa</Text>
+            </TouchableOpacity>
+          )}
+        </View>
       </View>
 
-      {/* Modal Chia sẻ */}
-      <Modal visible={showShareModal} transparent animationType="fade">
+      {/* Modal CMT */}
+      <Modal visible={showCommentModal} transparent animationType="slide">
         <View style={styles.modalOverlay}>
-          <View style={styles.modalBox}>
-            <Text style={styles.modalTitle}>Chia sẻ bài viết</Text>
-            <Text style={styles.modalSubtitle}>Liên kết ảnh:</Text>
-            <View style={styles.linkContainer}>
-              <Text style={styles.linkText} numberOfLines={1}>
-                {item.image}
-              </Text>
-            </View>
+          <View style={[styles.modalBox, { maxHeight: "80%", width: "90%" }]}>
+            <Text style={styles.modalTitle}>Bình luận</Text>
 
-            <View style={styles.shareOptionsRow}>
-              <TouchableOpacity style={styles.shareOptionBtn} onPress={shareToFriends}>
-                <Text style={styles.shareIcon}>👥</Text>
-                <Text style={styles.shareLabel}>Bạn bè</Text>
-              </TouchableOpacity>
-              <TouchableOpacity style={styles.shareOptionBtn}>
-                <Text style={styles.shareIcon}>📘</Text>
-                <Text style={styles.shareLabel}>Facebook</Text>
-              </TouchableOpacity>
-              <TouchableOpacity style={styles.shareOptionBtn}>
-                <Text style={styles.shareIcon}>📸</Text>
-                <Text style={styles.shareLabel}>Instagram</Text>
-              </TouchableOpacity>
-            </View>
+            <ScrollView style={{ width: "100%", marginBottom: 10 }}>
+              {comments.length === 0 ? (
+                <Text
+                  style={{ color: "#666", textAlign: "center", marginTop: 10 }}
+                >
+                  Chưa có bình luận nào. Hãy là người đầu tiên!
+                </Text>
+              ) : (
+                comments.map((c) => (
+                  <View key={c.id} style={{ marginBottom: 12 }}>
+                    <Text style={{ fontWeight: "600", color: "#2196F3" }}>
+                      {c.authorName}
+                    </Text>
+                    <Text style={{ color: "#333", marginBottom: 2 }}>
+                      {c.text}
+                    </Text>
+                    {c.createdAt?.seconds && (
+                      <Text style={{ fontSize: 11, color: "#999" }}>
+                        {new Date(c.createdAt.seconds * 1000).toLocaleString()}
+                      </Text>
+                    )}
+                  </View>
+                ))
+              )}
+            </ScrollView>
 
-            <TouchableOpacity style={styles.copyButton} onPress={copyToClipboard}>
-              <Text style={styles.copyButtonText}>📋 Sao chép liên kết</Text>
+            <TextInput
+              style={[styles.input, { marginTop: 10 }]}
+              placeholder="Viết bình luận..."
+              value={newComment}
+              onChangeText={setNewComment}
+              multiline
+            />
+
+            <TouchableOpacity
+              style={[styles.copyButton, { marginTop: 10 }]}
+              onPress={handleSendComment}
+            >
+              <Text style={styles.copyButtonText}>Gửi</Text>
             </TouchableOpacity>
 
-            <TouchableOpacity onPress={() => setShowShareModal(false)}>
+            <TouchableOpacity onPress={() => setShowCommentModal(false)}>
               <Text style={styles.modalClose}>Đóng</Text>
             </TouchableOpacity>
           </View>
@@ -345,17 +478,28 @@ const PhotoCard = ({ item, currentUserId }) => {
       </Modal>
 
       {/* Modal Bản đồ */}
-      <Modal visible={showLocationModal} transparent animationType="slide">
+      {/* <Modal visible={showLocationModal} transparent animationType="slide">
         <View style={styles.modalOverlay}>
           <View style={styles.mapModalBox}>
             <Text style={styles.modalTitle}>Vị trí Check-in</Text>
             <Text style={styles.locationCaption}>{item.title}</Text>
 
             <View style={styles.mapPlaceholder}>
-              <Text style={styles.mapText}>🗺️</Text>
-              <Text style={styles.mapLabel}>Hiển thị bản đồ Google Maps</Text>
-              <Text style={styles.mapCoords}>21.0285° N, 105.8342° E</Text>
-            </View>
+  {latitude && longitude ? (
+    <>
+      <Text style={styles.mapText}>🗺️</Text>
+      <Text style={styles.mapLabel}>Vị trí ảnh chụp:</Text>
+      <Text style={styles.mapCoords}>
+        {latitude.toFixed(4)}° N, {longitude.toFixed(4)}° E
+      </Text>
+    </>
+  ) : (
+    <Text style={{ color: "#666", textAlign: "center" }}>
+      Không có thông tin vị trí cho ảnh này
+    </Text>
+  )}
+</View>
+
 
             <TouchableOpacity style={styles.openMapButton}>
               <Text style={styles.openMapButtonText}>Mở trong Google Maps</Text>
@@ -366,7 +510,7 @@ const PhotoCard = ({ item, currentUserId }) => {
             </TouchableOpacity>
           </View>
         </View>
-      </Modal>
+      </Modal> */}
     </View>
   );
 };
@@ -377,6 +521,8 @@ export default function HomeScreen({ navigation }) {
   const [loading, setLoading] = useState(true);
   const [userList, setUserList] = useState([]);
   const [currentUserId, setCurrentUserId] = useState(null);
+  const [selectedUser, setSelectedUser] = useState(null);
+  const [showUserModal, setShowUserModal] = useState(false);
 
   useEffect(() => {
     // Get current user
@@ -386,7 +532,7 @@ export default function HomeScreen({ navigation }) {
     }
 
     // Listen to posts from Firebase
-    const q = query(collection(db, 'posts'), orderBy('createdAt', 'desc'));
+    const q = query(collection(db, "posts"), orderBy("createdAt", "desc"));
     const unsubscribe = onSnapshot(q, (querySnapshot) => {
       const postsData = [];
       querySnapshot.forEach((doc) => {
@@ -395,13 +541,23 @@ export default function HomeScreen({ navigation }) {
 
       // Filter posts based on followed users
       if (currentUserId) {
-        const filteredPosts = postsData.filter(post =>
-          post.author?.id === currentUserId || // Show own posts
-          userList.some(user => user.id === post.author?.id) // Show posts from followed users
+        const filteredPosts = postsData.filter(
+          (post) =>
+            post.author?.id === currentUserId || // Show own posts
+            userList.some((user) => user.id === post.author?.id) // Show posts from followed users
         );
-        console.log('🔥 Home: Filtered posts for feed:', filteredPosts.length, 'from', postsData.length, 'total');
-        console.log('🔥 Home: Current user ID:', currentUserId);
-        console.log('🔥 Home: Sample post authors:', postsData.slice(0, 3).map(p => p.author?.id));
+        console.log(
+          "🔥 Home: Filtered posts for feed:",
+          filteredPosts.length,
+          "from",
+          postsData.length,
+          "total"
+        );
+        console.log("🔥 Home: Current user ID:", currentUserId);
+        console.log(
+          "🔥 Home: Sample post authors:",
+          postsData.slice(0, 3).map((p) => p.author?.id)
+        );
         setPosts(filteredPosts);
       } else {
         // If no current user, show all posts (for demo purposes)
@@ -419,31 +575,34 @@ export default function HomeScreen({ navigation }) {
 
     const loadFriends = async () => {
       try {
-        const userDoc = await getDoc(doc(db, 'users', currentUserId));
+        const userDoc = await getDoc(doc(db, "users", currentUserId));
         if (userDoc.exists()) {
           const followingList = userDoc.data()?.following || [];
           if (followingList.length > 0) {
             const friendDocs = await Promise.all(
-              followingList.map(id => getDoc(doc(db, 'users', id)))
+              followingList.map((id) => getDoc(doc(db, "users", id)))
             );
 
             const friendsData = friendDocs
-              .filter(doc => doc.exists())
-              .map(doc => ({
+              .filter((doc) => doc.exists())
+              .map((doc) => ({
                 id: doc.id,
                 ...doc.data(),
                 lastActive: doc.data()?.lastActive || Date.now() - 300000, // Default to 5 min ago
-                postCount: doc.data()?.postCount || 0
+                postCount: doc.data()?.postCount || 0,
               }));
 
             setUserList(friendsData);
-            console.log('🔥 Home: Loaded friends for stories:', friendsData.length);
+            console.log(
+              "🔥 Home: Loaded friends for stories:",
+              friendsData.length
+            );
           } else {
             setUserList([]);
           }
         }
       } catch (error) {
-        console.error('Error loading friends:', error);
+        console.error("Error loading friends:", error);
         setUserList([]);
       }
     };
@@ -451,9 +610,207 @@ export default function HomeScreen({ navigation }) {
     loadFriends();
   }, [currentUserId]);
 
+  // User Profile Modal Component
+  const UserProfileModal = () => {
+    if (!selectedUser) return null;
+
+    const [userPosts, setUserPosts] = useState([]);
+    const [loadingPosts, setLoadingPosts] = useState(true);
+    const [following, setFollowing] = useState(false);
+    const [checkingFollow, setCheckingFollow] = useState(true);
+
+    useEffect(() => {
+      const checkFollowing = async () => {
+        if (!currentUserId || !selectedUser.id) {
+          setCheckingFollow(false);
+          return;
+        }
+
+        try {
+          const userDoc = await getDoc(doc(db, "users", currentUserId));
+          if (userDoc.exists()) {
+            const followingList = userDoc.data()?.following || [];
+            setFollowing(followingList.includes(selectedUser.id));
+          }
+        } catch (err) {
+          console.error("Error checking follow status:", err);
+        } finally {
+          setCheckingFollow(false);
+        }
+      };
+
+      checkFollowing();
+    }, [selectedUser.id, currentUserId]);
+
+    useEffect(() => {
+      const loadPosts = async () => {
+        try {
+          setLoadingPosts(true);
+          const q = query(
+            collection(db, "posts"),
+            orderBy("createdAt", "desc")
+          );
+          const snapshot = await getDocs(q);
+          const allPosts = snapshot.docs.map((d) => ({
+            id: d.id,
+            ...d.data(),
+          }));
+          const filtered = allPosts.filter(
+            (post) => post.author?.id === selectedUser.id
+          );
+          setUserPosts(filtered);
+        } catch (err) {
+          console.error("Error loading user posts:", err);
+        } finally {
+          setLoadingPosts(false);
+        }
+      };
+
+      loadPosts();
+    }, [selectedUser.id]);
+
+    const handleToggleFollow = async () => {
+      if (!selectedUser.id || !currentUserId) return;
+
+      const newFollowing = !following;
+      setFollowing(newFollowing);
+
+      try {
+        const userRef = doc(db, "users", currentUserId);
+        const authorRef = doc(db, "users", selectedUser.id);
+
+        if (newFollowing) {
+          await updateDoc(userRef, {
+            following: arrayUnion(selectedUser.id),
+          });
+          await updateDoc(authorRef, {
+            followers: increment(1),
+          });
+        } else {
+          await updateDoc(userRef, {
+            following: arrayRemove(selectedUser.id),
+          });
+          await updateDoc(authorRef, {
+            followers: increment(-1),
+          });
+        }
+      } catch (error) {
+        console.error("Error toggling follow:", error);
+        setFollowing(!newFollowing);
+        Alert.alert("Lỗi", "Không thể cập nhật theo dõi");
+      }
+    };
+
+    return (
+      <Modal visible={showUserModal} transparent animationType="slide">
+        <View style={styles.userModalOverlay}>
+          <View style={styles.userModalContent}>
+            <TouchableOpacity
+              style={styles.userModalClose}
+              onPress={() => setShowUserModal(false)}
+            >
+              <Text style={styles.userModalCloseText}>✕</Text>
+            </TouchableOpacity>
+
+            <ScrollView showsVerticalScrollIndicator={false}>
+              {/* Header */}
+              <View style={styles.userModalHeader}>
+                <Image
+                  source={{
+                    uri:
+                      selectedUser.avatar ||
+                      "https://cdn-icons-png.flaticon.com/512/3177/3177440.png",
+                  }}
+                  style={styles.userModalAvatar}
+                />
+                <Text style={styles.userModalName}>
+                  {selectedUser.name || "Người dùng"}
+                </Text>
+                <Text style={styles.userModalBio}>
+                  {selectedUser.bio || "Chưa có tiểu sử"}
+                </Text>
+              </View>
+
+              {/* Stats */}
+              <View style={styles.userModalStats}>
+                <View style={styles.userModalStatItem}>
+                  <Text style={styles.userModalStatNumber}>
+                    {userPosts.length}
+                  </Text>
+                  <Text style={styles.userModalStatLabel}>Bài đăng</Text>
+                </View>
+                <View style={styles.userModalStatItem}>
+                  <Text style={styles.userModalStatNumber}>
+                    {selectedUser.followers || 0}
+                  </Text>
+                  <Text style={styles.userModalStatLabel}>Người theo dõi</Text>
+                </View>
+                <View style={styles.userModalStatItem}>
+                  <Text style={styles.userModalStatNumber}>
+                    {selectedUser.likeCount || 0}
+                  </Text>
+                  <Text style={styles.userModalStatLabel}>Đã thả tim</Text>
+                </View>
+              </View>
+
+              {/* Follow Button */}
+              {!checkingFollow && (
+                <TouchableOpacity
+                  style={[
+                    styles.userModalFollowBtn,
+                    following && styles.userModalFollowingBtn,
+                  ]}
+                  onPress={handleToggleFollow}
+                >
+                  <Text
+                    style={[
+                      styles.userModalFollowText,
+                      following && styles.userModalFollowingText,
+                    ]}
+                  >
+                    {following ? "✓ Đang theo dõi" : "+ Theo dõi"}
+                  </Text>
+                </TouchableOpacity>
+              )}
+
+              {/* Posts Grid */}
+              <Text style={styles.userModalSectionTitle}>Bài đăng</Text>
+              {loadingPosts ? (
+                <ActivityIndicator
+                  size="large"
+                  color="#2196F3"
+                  style={{ marginTop: 20 }}
+                />
+              ) : userPosts.length > 0 ? (
+                <View style={styles.userModalPostsGrid}>
+                  {userPosts.map((post) => (
+                    <Image
+                      key={post.id}
+                      source={{
+                        uri: post.image || "https://via.placeholder.com/150",
+                      }}
+                      style={styles.userModalPostImage}
+                    />
+                  ))}
+                </View>
+              ) : (
+                <Text style={styles.userModalEmptyText}>Chưa có bài đăng</Text>
+              )}
+            </ScrollView>
+          </View>
+        </View>
+      </Modal>
+    );
+  };
+
   if (loading) {
     return (
-      <View style={[styles.container, { justifyContent: 'center', alignItems: 'center' }]}>
+      <View
+        style={[
+          styles.container,
+          { justifyContent: "center", alignItems: "center" },
+        ]}
+      >
         <ActivityIndicator size="large" color="#2196F3" />
         <Text style={{ marginTop: 10 }}>Loading posts...</Text>
       </View>
@@ -462,23 +819,38 @@ export default function HomeScreen({ navigation }) {
 
   return (
     <View style={styles.container}>
-      <Text style={styles.header}>📸 CheckinPhoto</Text>
-      <ScrollView horizontal showsHorizontalScrollIndicator={false} style={styles.userScroll}>
+      <Text style={styles.header}>Here You</Text>
+      <ScrollView
+        horizontal
+        showsHorizontalScrollIndicator={false}
+        style={styles.userScroll}
+      >
         {userList.map((user) => (
-          <UserCircle key={user.id} user={user} navigation={navigation} />
+          <UserCircle
+            key={user.id}
+            user={user}
+            onPress={(user) => {
+              setSelectedUser(user);
+              setShowUserModal(true);
+            }}
+          />
         ))}
       </ScrollView>
       <FlatList
         data={posts}
         keyExtractor={(item) => item.id}
-        renderItem={({ item }) => <PhotoCard item={item} currentUserId={currentUserId} />}
+        renderItem={({ item }) => (
+          <PhotoCard item={item} currentUserId={currentUserId} />
+        )}
         showsVerticalScrollIndicator={false}
         ListEmptyComponent={
-          <View style={{ padding: 10, alignItems: 'center' }}>
-            <Text style={{ color: '#666' }}>Chưa có bài đăng nào</Text>
+          <View style={{ padding: 10, alignItems: "center" }}>
+            <Text style={{ color: "#666" }}>Chưa có bài đăng nào</Text>
           </View>
         }
       />
+
+      <UserProfileModal />
     </View>
   );
 }
@@ -491,37 +863,44 @@ const styles = StyleSheet.create({
     paddingTop: 40,
   },
   header: {
-    fontSize: 22,
-    fontWeight: "bold",
+    fontSize: 25,
+    fontWeight: "400",
     textAlign: "center",
     marginBottom: 10,
-    color: "#333",
+    color: "#FF6F61", // màu cam hồng nổi bật
+    fontStyle: "italic",
+    fontFamily: "serif", // hoặc dùng font tuỳ chỉnh như 'DancingScript'
+    letterSpacing: 1.2,
+    textShadowColor: "#fdd",
+    textShadowOffset: { width: 1, height: 1 },
+    textShadowRadius: 3,
   },
+
   userScroll: {
-    paddingHorizontal: 10,
+    paddingHorizontal: 5,
     marginBottom: 10,
   },
   userItem: {
     alignItems: "center",
-    marginRight: 16,
+    marginRight: 2,
   },
   avatarWrapper: {
     position: "relative",
     borderWidth: 2,
-    borderColor: "#2196F3",
+    borderColor: "#f08c0aff",
     borderRadius: 40,
     padding: 2,
   },
   userAvatar: {
-    width: 60,
-    height: 60,
+    width: 40,
+    height: 40,
     borderRadius: 30,
   },
   postBadge: {
     position: "absolute",
     bottom: -4,
     right: -4,
-    backgroundColor: "#2196F3",
+
     borderRadius: 10,
     paddingHorizontal: 4,
     paddingVertical: 2,
@@ -641,11 +1020,12 @@ const styles = StyleSheet.create({
   },
   actionButton: {
     alignItems: "center",
+    
   },
   heartIcon: {
     width: 24,
-    height: 24,
-    marginBottom: 2,
+    height: 30,
+    marginBottom: 1,
   },
   iconImage: {
     width: 24,
@@ -654,8 +1034,8 @@ const styles = StyleSheet.create({
   },
   count: {
     fontSize: 12,
-    color: "#555",
-    marginTop: 2,
+    color: "#555"
+    
   },
 
   // Modal chung
@@ -793,5 +1173,131 @@ const styles = StyleSheet.create({
     fontSize: 14,
     color: "#2196F3",
     fontWeight: "600",
+  },
+
+  // User Profile Modal Styles
+  userModalOverlay: {
+    flex: 1,
+    backgroundColor: "rgba(0, 0, 0, 0.7)",
+    justifyContent: "flex-end",
+  },
+  userModalContent: {
+    backgroundColor: "#fff",
+    borderTopLeftRadius: 24,
+    borderTopRightRadius: 24,
+    maxHeight: "90%",
+    paddingBottom: 20,
+  },
+  userModalClose: {
+    position: "absolute",
+    top: 16,
+    right: 16,
+    zIndex: 10,
+    backgroundColor: "rgba(0, 0, 0, 0.3)",
+    borderRadius: 20,
+    width: 36,
+    height: 36,
+    justifyContent: "center",
+    alignItems: "center",
+  },
+  userModalCloseText: {
+    color: "#fff",
+    fontSize: 20,
+    fontWeight: "bold",
+  },
+  userModalHeader: {
+    alignItems: "center",
+    paddingTop: 40,
+    paddingHorizontal: 20,
+    paddingBottom: 20,
+  },
+  userModalAvatar: {
+    width: 100,
+    height: 100,
+    borderRadius: 50,
+    borderWidth: 3,
+    borderColor: "#2196F3",
+    marginBottom: 12,
+  },
+  userModalName: {
+    fontSize: 22,
+    fontWeight: "bold",
+    color: "#333",
+    marginBottom: 6,
+  },
+  userModalBio: {
+    fontSize: 15,
+    color: "#666",
+    textAlign: "center",
+    paddingHorizontal: 20,
+  },
+  userModalStats: {
+    flexDirection: "row",
+    justifyContent: "space-around",
+    paddingVertical: 20,
+    borderTopWidth: 1,
+    borderBottomWidth: 1,
+    borderColor: "#eee",
+    marginHorizontal: 20,
+  },
+  userModalStatItem: {
+    alignItems: "center",
+  },
+  userModalStatNumber: {
+    fontSize: 20,
+    fontWeight: "bold",
+    color: "#333",
+  },
+  userModalStatLabel: {
+    fontSize: 13,
+    color: "#666",
+    marginTop: 4,
+  },
+  userModalFollowBtn: {
+    backgroundColor: "#2196F3",
+    marginHorizontal: 20,
+    marginVertical: 16,
+    paddingVertical: 12,
+    borderRadius: 24,
+    alignItems: "center",
+  },
+  userModalFollowingBtn: {
+    backgroundColor: "#fff",
+    borderWidth: 2,
+    borderColor: "#2196F3",
+  },
+  userModalFollowText: {
+    color: "#fff",
+    fontSize: 16,
+    fontWeight: "600",
+  },
+  userModalFollowingText: {
+    color: "#2196F3",
+  },
+  userModalSectionTitle: {
+    fontSize: 18,
+    fontWeight: "bold",
+    color: "#333",
+    marginHorizontal: 20,
+    marginTop: 16,
+    marginBottom: 12,
+  },
+  userModalPostsGrid: {
+    flexDirection: "row",
+    flexWrap: "wrap",
+    paddingHorizontal: 18,
+  },
+  userModalPostImage: {
+    width: (width - 48) / 3,
+    height: (width - 48) / 3,
+    margin: 2,
+    borderRadius: 8,
+  },
+  userModalEmptyText: {
+    textAlign: "center",
+    color: "#999",
+    fontSize: 15,
+    marginTop: 20,
+    marginBottom: 40,
   },
 });

@@ -66,7 +66,7 @@ export default function EditProfileScreen({ navigation }) {
   const interestOptions = [
     'Thể thao', 'Âm nhạc', 'Du lịch', 'Đọc sách', 
     'Nấu ăn', 'Công nghệ', 'Thời trang', 'Nhiếp ảnh',
-    'Yoga', 'Gaming', 'Nghệ thuật', 'Học ngoại ngữ'
+    'Yoga', 'Gaming', 'Nghệ thuật', 'Học ngoại ngữ',"Khác"
   ];
   
   const formatBirthday = (text) => {
