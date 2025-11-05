@@ -41,6 +41,7 @@ import * as ImagePicker from "expo-image-picker";
 import * as FileSystem from "expo-file-system/legacy";
 import { ID } from "react-native-appwrite";
 import { AppwriteClientFactory } from "../appwrite.config";
+import AsyncStorage from '@react-native-async-storage/async-storage';
 
 const { width } = Dimensions.get("window");
 
@@ -61,6 +62,9 @@ export default function ProfileScreen() {
   const [weight, setWeight] = useState('');
   const [showMaritalModal, setShowMaritalModal] = useState(false);
   const [showInterestsModal, setShowInterestsModal] = useState(false);
+  const [userPosts, setUserPosts] = useState([]);
+  const [loadingPosts, setLoadingPosts] = useState(false);
+  const [selectedPost, setSelectedPost] = useState(null);
   const [likedPosts, setLikedPosts] = useState([]);
   const [loadingLikedPosts, setLoadingLikedPosts] = useState(false);
   const [userPosts, setUserPosts] = useState([]);
@@ -533,6 +537,40 @@ export default function ProfileScreen() {
       setChatId(null);
     };
   }, [chatUser, currentUid]);
+
+  const loadUserPosts = async () => {
+    setLoadingPosts(true);
+    try {
+      const rawLocal = await AsyncStorage.getItem('LOCAL_POSTS');
+      const localPosts = rawLocal ? JSON.parse(rawLocal) : [];
+      
+      const rawAppwrite = await AsyncStorage.getItem('APPWRITE_POSTS');
+      const appwritePosts = rawAppwrite ? JSON.parse(rawAppwrite) : [];
+      
+      const allPosts = [...localPosts, ...appwritePosts];
+      
+      const processedPosts = allPosts.map(post => {
+        if (post && !post.uri && post.localUri) {
+          return { ...post, uri: post.localUri };
+        }
+        return post;
+      }).filter(post => post && post.uri);
+      
+      processedPosts.sort((a, b) => (b.createdAt || 0) - (a.createdAt || 0));
+      
+      setUserPosts(processedPosts);
+    } catch (error) {
+      console.error('Error loading posts:', error);
+    } finally {
+      setLoadingPosts(false);
+    }
+  };
+  
+  useEffect(() => {
+    if (tab === 'posts' && currentUid) {
+      loadUserPosts();
+    }
+  }, [tab, currentUid]);
 
   // Loading
   if (loading) {
@@ -1459,6 +1497,21 @@ export default function ProfileScreen() {
           </View>
         </View>
       </Modal>
+      {/* IMAGE VIEWER MODAL */}
+      <Modal visible={!!selectedPost} transparent animationType="fade"
+        onRequestClose={() => setSelectedPost(null)}>
+        <TouchableOpacity 
+          style={styles.imageViewerOverlay}
+          activeOpacity={1}
+          onPress={() => setSelectedPost(null)}
+        >
+          <Image
+            source={{ uri: selectedPost?.uri }}
+            style={styles.fullImage}
+            resizeMode="contain"
+          />
+        </TouchableOpacity>
+      </Modal>
     </>
   );
 }
@@ -1993,4 +2046,14 @@ const styles = StyleSheet.create({
     borderRadius: 22,
   },
   sendText: { color: "#fff", fontWeight: "bold" },
+  imageViewerOverlay: {
+    flex: 1,
+    backgroundColor: 'rgba(0,0,0,0.9)',
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  fullImage: {
+    width: '100%',
+    height: '100%',
+  },
 });
