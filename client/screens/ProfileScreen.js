@@ -62,9 +62,7 @@ export default function ProfileScreen() {
   const [weight, setWeight] = useState('');
   const [showMaritalModal, setShowMaritalModal] = useState(false);
   const [showInterestsModal, setShowInterestsModal] = useState(false);
-  const [userPosts, setUserPosts] = useState([]);
   const [loadingPosts, setLoadingPosts] = useState(false);
-  const [selectedPost, setSelectedPost] = useState(null);
   const [likedPosts, setLikedPosts] = useState([]);
   const [loadingLikedPosts, setLoadingLikedPosts] = useState(false);
   const [userPosts, setUserPosts] = useState([]);
