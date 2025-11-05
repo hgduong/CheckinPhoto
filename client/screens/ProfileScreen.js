@@ -63,7 +63,8 @@ export default function ProfileScreen() {
   const [userPosts, setUserPosts] = useState([]);
   const [loadingPosts, setLoadingPosts] = useState(false);
   const [selectedPost, setSelectedPost] = useState(null);
-
+  const [likedPosts, setLikedPosts] = useState([]);
+  const [loadingLikedPosts, setLoadingLikedPosts] = useState(false);
   const maritalOptions = [
     'Độc thân',
     'Hẹn hò',
@@ -104,17 +105,19 @@ export default function ProfileScreen() {
 
   const currentUid = auth.currentUser?.uid;
 
-  // Lấy thông tin người dùng
+  // Lấy thông tin người dùng với realtime updates
   useEffect(() => {
-    const fetchProfile = async () => {
-      const user = auth.currentUser;
+    let unsubProfile = () => {};
+
+    const setupProfileListener = (user) => {
       if (!user) {
         setProfile(null);
         setLoading(false);
         return;
       }
-      try {
-        const snap = await getDoc(doc(db, "users", user.uid));
+
+      // Use realtime listener instead of one-time fetch
+      unsubProfile = onSnapshot(doc(db, "users", user.uid), (snap) => {
         if (snap.exists()) {
           const userData = snap.data();
           setProfile(userData);
@@ -135,16 +138,16 @@ export default function ProfileScreen() {
           setWeight('');
           setInterests([]);
         }
-      } catch (err) {
-        console.error("Error loading profile:", err);
-      } finally {
         setLoading(false);
-      }
+      }, (err) => {
+        console.error("Error loading profile:", err);
+        setLoading(false);
+      });
     };
 
     const unsub = auth.onAuthStateChanged((user) => {
       if (user) {
-        fetchProfile();
+        setupProfileListener(user);
       } else {
         setProfile(null);
         setFriends([]);
@@ -152,7 +155,10 @@ export default function ProfileScreen() {
       }
     });
 
-    return () => unsub();
+    return () => {
+      unsub();
+      unsubProfile();
+    };
   }, []);
 
   // Cập nhật vị trí
@@ -391,6 +397,51 @@ export default function ProfileScreen() {
 
     setInput("");
   };
+
+  // Load liked posts when "liked" tab is selected with realtime updates
+  useEffect(() => {
+    if (!profile || !currentUid || tab !== "liked") {
+      setLikedPosts([]);
+      return;
+    }
+
+    setLoadingLikedPosts(true);
+
+    // Listen to user document for likedPosts changes
+    const unsubUser = onSnapshot(doc(db, "users", currentUid), async (userSnap) => {
+      try {
+        if (!userSnap.exists()) {
+          setLikedPosts([]);
+          setLoadingLikedPosts(false);
+          return;
+        }
+
+        const likedPostIds = userSnap.data()?.likedPosts || [];
+        if (!Array.isArray(likedPostIds) || likedPostIds.length === 0) {
+          setLikedPosts([]);
+          setLoadingLikedPosts(false);
+          return;
+        }
+
+        // Fetch all liked posts
+        const postPromises = likedPostIds.map(postId => getDoc(doc(db, "posts", postId)));
+        const postDocs = await Promise.all(postPromises);
+
+        const posts = postDocs
+          .filter(d => d.exists())
+          .map(d => ({ id: d.id, ...d.data() }));
+
+        setLikedPosts(posts);
+        setLoadingLikedPosts(false);
+      } catch (err) {
+        console.error("Error loading liked posts:", err);
+        setLikedPosts([]);
+        setLoadingLikedPosts(false);
+      }
+    });
+
+    return () => unsubUser();
+  }, [profile, tab, currentUid]);
 
   // Lắng nghe tin nhắn trong chat hiện tại
   useEffect(() => {
@@ -708,9 +759,44 @@ export default function ProfileScreen() {
       );
     }
 
+    if (tab === "liked") {
+      if (loadingLikedPosts) {
+        return (
+          <View style={styles.emptyContainer}>
+            <ActivityIndicator size="large" color="#2196F3" />
+            <Text style={styles.emptyText}>Đang tải...</Text>
+          </View>
+        );
+      }
+
+      return likedPosts.length > 0 ? (
+        <FlatList
+          data={likedPosts}
+          keyExtractor={(item) => item.id}
+          numColumns={3}
+          contentContainerStyle={styles.likedPostsContainer}
+          renderItem={({ item }) => (
+            <TouchableOpacity style={styles.likedPostItem}>
+              <Image
+                source={{ uri: item.image || "https://via.placeholder.com/150" }}
+                style={styles.likedPostImage}
+              />
+              <View style={styles.likedPostOverlay}>
+                <Text style={styles.likedPostLikes}>❤️ {item.likes || 0}</Text>
+              </View>
+            </TouchableOpacity>
+          )}
+        />
+      ) : (
+        <View style={styles.emptyContainer}>
+          <Text style={styles.emptyText}>Chưa thả tim bài nào</Text>
+        </View>
+      );
+    }
+
     return (
       <View style={styles.emptyContainer}>
-        <Text style={styles.emptyText}>Chưa thả tim bài nào</Text>
+        <Text style={styles.emptyText}>Chưa có nội dung</Text>
       </View>
     );
   };
@@ -1458,6 +1544,38 @@ const styles = StyleSheet.create({
   emptyText: {
     fontSize: 16,
     color: "#777",
+    textAlign: "center",
+  },
+
+  likedPostsContainer: {
+    paddingHorizontal: 2,
+    paddingTop: 10,
+  },
+  likedPostItem: {
+    width: (width - 8) / 3,
+    height: (width - 8) / 3,
+    margin: 1,
+    position: "relative",
+  },
+  likedPostImage: {
+    width: "100%",
+    height: "100%",
+    borderRadius: 4,
+  },
+  likedPostOverlay: {
+    position: "absolute",
+    bottom: 0,
+    left: 0,
+    right: 0,
+    backgroundColor: "rgba(0, 0, 0, 0.5)",
+    padding: 4,
+    borderBottomLeftRadius: 4,
+    borderBottomRightRadius: 4,
+  },
+  likedPostLikes: {
+    color: "#fff",
+    fontSize: 12,
+    fontWeight: "600",
     textAlign: "center",
   },
 

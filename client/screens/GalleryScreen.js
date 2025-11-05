@@ -18,6 +18,16 @@ import * as Location from 'expo-location';
 import MaterialIcons from '@expo/vector-icons/MaterialIcons';
 import { useFocusEffect } from '@react-navigation/native';
 import AsyncStorage from '@react-native-async-storage/async-storage';
+import * as FileSystem from 'expo-file-system/legacy';
+
+// Firebase
+import { collection, addDoc, serverTimestamp } from 'firebase/firestore';
+import { auth, db } from '../firebaseConfig';
+
+// Appwrite
+import { ID } from 'react-native-appwrite';
+import { AppwriteClientFactory } from '../appwrite.config';
+const storage = AppwriteClientFactory.getInstance().storage;
 
 const { width } = Dimensions.get('window');
 
@@ -131,57 +141,104 @@ export default function GalleryScreen({ navigation }) {
 
   const handleUpload = async () => {
     try {
-      // Get current user info from Firebase Auth
-      const { auth } = await import('../firebaseConfig');
+      if (!selectedImage) return Alert.alert('Lỗi', 'Không có ảnh để tải lên');
+
       const currentUser = auth.currentUser;
       if (!currentUser) {
         Alert.alert('Lỗi', 'Bạn cần đăng nhập để upload');
         return;
       }
 
-      // Create post data (don't include id, let Firebase generate it)
-      const postData = {
+      // Prepare native file for Appwrite
+      const prepareNativeFile = async (uri, filename = `photo_${Date.now()}.jpg`) => {
+        try {
+          const info = await FileSystem.getInfoAsync(uri);
+          return { name: filename, size: info.size || 0, type: 'image/jpeg', uri };
+        } catch (e) {
+          console.error('prepareNativeFile error', e);
+          throw e;
+        }
+      };
+
+      const file = await prepareNativeFile(selectedImage.uri);
+
+      // Upload to Appwrite
+      const res = await storage.createFile(
+        process.env.EXPO_PUBLIC_APPWRITE_BUCKET_ID,
+        ID.unique(),
+        file
+      );
+
+      // Try to get public file URL; some SDKs return href, otherwise construct
+      let fileView;
+      try {
+        fileView = await storage.getFileView(process.env.EXPO_PUBLIC_APPWRITE_BUCKET_ID, res.$id);
+      } catch (e) {
+        try {
+          fileView = storage.getFileView(process.env.EXPO_PUBLIC_APPWRITE_BUCKET_ID, res.$id);
+        } catch (e2) {
+          fileView = null;
+        }
+      }
+
+  const possibleUrl = (fileView && fileView.href) || (typeof fileView === 'string' ? fileView : null) || `${process.env.EXPO_PUBLIC_APPWRITE_ENDPOINT}/storage/buckets/${process.env.EXPO_PUBLIC_APPWRITE_BUCKET_ID}/files/${res.$id}/view?project=${process.env.EXPO_PUBLIC_APPWRITE_PROJECT_ID}`;
+
+      // Build post object for local display (APPWRITE_POSTS)
+      const post = {
+        id: res.$id,
+        uri: possibleUrl,
+        localUri: selectedImage.uri,
+        title: editedSuggestions || selectedImage.aiDescription || 'Ảnh của tôi',
+        description: editedSuggestions || selectedImage.aiDescription || '',
         author: {
-          id: currentUser.uid, // Use actual Firebase UID
-          name: 'Tên của bạn', // TODO: Get from user profile
-          avatar: 'https://randomuser.me/api/portraits/men/1.jpg' // TODO: Get from user profile
+          id: currentUser.uid,
         },
-        title: selectedImage.aiDescription || 'Ảnh của tôi',
-        description: selectedImage.aiDescription || '',
-        image: selectedImage.uri,
+        createdAt: Date.now(),
+        location: selectedImage.address || null,
+      };
+
+      // Save to AsyncStorage for APPWRITE_POSTS (so Gallery shows immediately)
+      const raw = await AsyncStorage.getItem('APPWRITE_POSTS');
+      const arr = raw ? JSON.parse(raw) : [];
+      arr.unshift(post);
+      await AsyncStorage.setItem('APPWRITE_POSTS', JSON.stringify(arr));
+  // Update local state so the new post appears immediately
+  setImages(prev => [post, ...prev]);
+
+      // Also create Firestore post so HomeScreen (which listens to 'posts') will show it
+      const firestorePost = {
+        author: {
+          id: currentUser.uid,
+          name: currentUser.displayName || currentUser.email || 'Người dùng',
+          avatar: currentUser.photoURL || null,
+        },
+        title: post.title,
+        description: post.description,
+        image: possibleUrl,
         likes: 0,
+        likedBy: [],
         comments: 0,
         shares: 0,
-        maps: 1,
-        createdAt: new Date(), // Use Date object for Firebase timestamp
-        likedBy: [],
-        location: selectedImage.address
+        maps: post.location ? 1 : 0,
+        location: post.location || null,
+        createdAt: serverTimestamp(),
       };
 
-      // Save to Firebase
-      const { collection, addDoc, serverTimestamp } = await import('firebase/firestore');
-      const { db } = await import('../firebaseConfig');
+      try {
+        const docRef = await addDoc(collection(db, 'posts'), firestorePost);
+        console.log('📸 Gallery: Firestore post created:', docRef.id);
+      } catch (e) {
+        console.warn('Could not create Firestore post, continuing with Appwrite storage only', e.message || e);
+      }
 
-      // Use serverTimestamp for consistent timing
-      const firebasePostData = {
-        ...postData,
-        createdAt: serverTimestamp()
-      };
-
-      const docRef = await addDoc(collection(db, 'posts'), firebasePostData);
-      console.log('📸 Gallery: Post uploaded with Firebase ID:', docRef.id);
-
-      // Update the post data with the correct Firebase ID for immediate display
-      const updatedPostData = { ...postData, id: docRef.id };
-      console.log('📸 Gallery: Updated post data:', updatedPostData);
-
-      Alert.alert('Thành công', 'Ảnh đã được đăng lên trang chủ!', [
-        { text: 'OK', onPress: () => setModalVisible(false) }
-      ]);
-
+      Alert.alert('Thành công', 'Ảnh đã được tải lên', [{ text: 'OK', onPress: () => {
+        setModalVisible(false);
+        setSelectedImage(null);
+        setEditedSuggestions('');
+      } }]);
     } catch (error) {
       console.error('Upload error:', error);
-      Alert.alert('Lỗi', 'Không thể upload ảnh');
+      Alert.alert('Lỗi', 'Không thể upload ảnh: ' + (error?.message || error));
     }
   };
 
