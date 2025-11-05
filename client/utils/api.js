@@ -4,6 +4,8 @@
  */
 
 import CONFIG from '../config';
+import * as FileSystem from "expo-file-system/legacy";
+import * as ImageManipulator from 'expo-image-manipulator';
 
 /**
  * Wrapper cho fetch với timeout và error handling
@@ -37,6 +39,18 @@ export async function analyzeImage(imageUri, latitude, longitude) {
   }
 
   try {
+    // Resize image to reduce size before sending
+    const manipulated = await ImageManipulator.manipulateAsync(
+      imageUri,
+      [{ resize: { width: 1024 } }],
+      { compress: 0.5, format: ImageManipulator.SaveFormat.JPEG }
+    );
+
+    // Convert resized image to base64
+    const base64 = await FileSystem.readAsStringAsync(manipulated.uri, {
+      encoding: FileSystem.EncodingType.Base64,
+    });
+
     const response = await fetchWithTimeout(
       `${CONFIG.API_BASE_URL}/analyze`,
       {
@@ -45,11 +59,12 @@ export async function analyzeImage(imageUri, latitude, longitude) {
           'Content-Type': 'application/json',
         },
         body: JSON.stringify({
-          imageUri,
-          latitude,
-          longitude,
+          imageBase64: `data:image/jpeg;base64,${base64}`,
+          latitude: latitude,
+          longitude: longitude,
         }),
-      }
+      },
+      90000 // 90 second timeout
     );
 
     if (!response.ok) {
