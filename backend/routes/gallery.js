@@ -52,7 +52,7 @@ const upload = multer({
  */
 router.post('/analyze', async (req, res) => {
   try {
-    const { latitude, longitude, imageUri } = req.body;
+    const { latitude, longitude, imageBase64 } = req.body;
     const result = {};
 
     // 1) Geocode sử dụng Google Maps Geocoding API
@@ -89,9 +89,9 @@ router.post('/analyze', async (req, res) => {
     }
 
     // 2) AI analysis với Gemini
-    if (process.env.GEMINI_API_KEY && imageUri) {
+    if (process.env.GEMINI_API_KEY && imageBase64) {
       try {
-        const ai = await aiService.analyzeImage(imageUri);
+        const ai = await aiService.analyzeImage(imageBase64);
         result.ai = ai;
       } catch (aiError) {
         console.error('AI analyze error:', aiError);
@@ -102,8 +102,8 @@ router.post('/analyze', async (req, res) => {
       }
     } else if (!process.env.GEMINI_API_KEY) {
       result.ai = { warning: 'GEMINI_API_KEY not configured' };
-    } else if (!imageUri) {
-      result.ai = { warning: 'No imageUri provided for AI analysis' };
+    } else if (!imageBase64) {
+      result.ai = { warning: 'No image data provided for AI analysis' };
     }
 
     res.json(result);
