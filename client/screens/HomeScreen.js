@@ -14,7 +14,7 @@ import {
   Alert,
 } from "react-native";
 import { MaterialIcons } from '@expo/vector-icons';
-import { collection, onSnapshot, query, orderBy, doc, updateDoc, arrayUnion, arrayRemove, getDoc, getDocs, deleteDoc } from "firebase/firestore";
+import { collection, onSnapshot, query, orderBy, doc, updateDoc, arrayUnion, arrayRemove, getDoc, getDocs, deleteDoc, increment } from "firebase/firestore";
 import { db } from "../firebaseConfig";
 import { auth } from "../firebaseConfig";
 
@@ -81,6 +81,8 @@ const PhotoCard = ({ item, currentUserId }) => {
   const toggleLike = async () => {
     const newLiked = !liked;
     const currentLikes = item.likes || 0;
+    const previousLiked = liked;
+    const previousLikeCount = likeCount;
 
     // Always update local state first for immediate UI feedback
     setLiked(newLiked);
@@ -115,27 +117,48 @@ const PhotoCard = ({ item, currentUserId }) => {
 
       if (currentUserId) {
         if (newLiked) {
-          // Add like
+          // Add like to post
           await updateDoc(postRef, {
             likes: currentLikes + 1,
             likedBy: arrayUnion(currentUserId)
           });
           console.log('🔥 Home: Added like to post:', item.id);
+
+          // Add post to user's likedPosts and increment likeCount
+          const userRef = doc(db, 'users', currentUserId);
+          await updateDoc(userRef, {
+            likedPosts: arrayUnion(item.id),
+            likeCount: increment(1)
+          });
+          console.log('🔥 Home: Added post to user likedPosts:', item.id);
+          console.log('✅ Home: Like saved successfully to Firebase');
         } else {
-          // Remove like
+          // Remove like from post
           await updateDoc(postRef, {
             likes: Math.max(0, currentLikes - 1),
             likedBy: arrayRemove(currentUserId)
           });
           console.log('🔥 Home: Removed like from post:', item.id);
+
+          // Remove post from user's likedPosts and decrement likeCount
+          const userRef = doc(db, 'users', currentUserId);
+          await updateDoc(userRef, {
+            likedPosts: arrayRemove(item.id),
+            likeCount: increment(-1)
+          });
+          console.log('🔥 Home: Removed post from user likedPosts:', item.id);
+          console.log('✅ Home: Unlike saved successfully to Firebase');
         }
       } else {
         console.log('🔥 Home: No currentUserId, skipping Firebase update');
       }
 
     } catch (error) {
-      console.error('Error toggling like:', error);
-      // Local state already updated, so UI remains responsive
+      console.error('❌ Error toggling like:', error);
+      // Rollback local state on error
+      setLiked(previousLiked);
+      setLikeCount(previousLikeCount);
+      Alert.alert('Lỗi', 'Không thể cập nhật like. Vui lòng thử lại.');
     }
   };
 
@@ -188,17 +211,25 @@ const PhotoCard = ({ item, currentUserId }) => {
     <View style={styles.cardWrapper}>
       <View style={styles.card}>
         <View style={styles.authorRow}>
-          <Image source={{ uri: item.author?.avatar || 'https://randomuser.me/api/portraits/men/1.jpg' }} style={styles.avatar} defaultSource={require('../assets/favicon.png')} />
+          <Image 
+            source={{ 
+              uri: item.author?.avatar || 'https://cdn-icons-png.flaticon.com/512/3177/3177440.png'
+            }} 
+            style={styles.avatar} 
+            defaultSource={require('../assets/favicon.png')} 
+          />
           <View style={styles.authorInfo}>
             <Text style={styles.authorName}>{item.author?.name || 'Người dùng'}</Text>
-            <TouchableOpacity
-              style={[styles.followButton, following && styles.followingButton]}
-              onPress={toggleFollow}
-            >
-              <Text style={[styles.followText, following && styles.followingText]}>
-                {following ? '✓ Đang theo dõi' : '+ Theo dõi'}
-              </Text>
-            </TouchableOpacity>
+            {!isOwnPost && (
+              <TouchableOpacity
+                style={[styles.followButton, following && styles.followingButton]}
+                onPress={toggleFollow}
+              >
+                <Text style={[styles.followText, following && styles.followingText]}>
+                  {following ? '✓ Đang theo dõi' : '+ Theo dõi'}
+                </Text>
+              </TouchableOpacity>
+            )}
           </View>
         </View>
         <Image source={{ uri: item.image || 'https://via.placeholder.com/300x300?text=No+Image' }} style={styles.image} />
@@ -401,7 +432,7 @@ export default function HomeScreen({ navigation }) {
         renderItem={({ item }) => <PhotoCard item={item} currentUserId={currentUserId} />}
         showsVerticalScrollIndicator={false}
         ListEmptyComponent={
-          <View style={{ padding: 20, alignItems: 'center' }}>
+          <View style={{ padding: 10, alignItems: 'center' }}>
             <Text style={{ color: '#666' }}>Chưa có bài đăng nào</Text>
           </View>
         }

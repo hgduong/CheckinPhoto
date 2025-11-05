@@ -58,10 +58,13 @@ export default function RegisterScreen({ navigation }) {
         bio: "Chào mừng đến với CheckinPhoto!",
         location: "Việt Nam",
         followers: 0,
-        following: 0,
+        following: [],
         likeCount: 0,
         postCount: 0,
+        likedPosts: [],
+        lastActive: Date.now(),
         createdAt: new Date(),
+        updatedAt: new Date(),
       });
 
       Alert.alert("Thành công", "Tài khoản đã được tạo.");
