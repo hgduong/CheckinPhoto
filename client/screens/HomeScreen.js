@@ -189,10 +189,52 @@ const PhotoCard = ({ item, currentUserId }) => {
 
   const toggleFollow = async () => {
     try {
-      // TODO: Implement follow/unfollow logic with Firebase
-      setFollowing(!following);
+      console.log('🔥 Home: toggleFollow called for post author:', item.author?.id);
+      if (!currentUserId || !item.author?.id) {
+        console.log('🔥 Home: Missing currentUserId or author ID');
+        return;
+      }
+
+      const userRef = doc(db, 'users', currentUserId);
+      const targetUserRef = doc(db, 'users', item.author.id);
+
+      const userSnap = await getDoc(userRef);
+      const targetSnap = await getDoc(targetUserRef);
+
+      if (!userSnap.exists() || !targetSnap.exists()) {
+        console.log('🔥 Home: User or target user document does not exist');
+        return;
+      }
+
+      const currentFollowing = userSnap.data()?.following || [];
+      const isFollowing = currentFollowing.includes(item.author.id);
+
+      console.log('🔥 Home: Currently following:', isFollowing);
+
+      if (isFollowing) {
+        // Unfollow
+        await updateDoc(userRef, {
+          following: arrayRemove(item.author.id)
+        });
+        await updateDoc(targetUserRef, {
+          followers: Math.max((targetSnap.data()?.followers || 0) - 1, 0)
+        });
+        console.log('🔥 Home: Unfollowed user:', item.author.id);
+      } else {
+        // Follow
+        await updateDoc(userRef, {
+          following: arrayUnion(item.author.id)
+        });
+        await updateDoc(targetUserRef, {
+          followers: (targetSnap.data()?.followers || 0) + 1
+        });
+        console.log('🔥 Home: Followed user:', item.author.id);
+      }
+
+      setFollowing(!isFollowing);
+      console.log('✅ Home: Follow toggle completed');
     } catch (error) {
-      console.error('Error toggling follow:', error);
+      console.error('❌ Home: Error toggling follow:', error);
     }
   };
 
@@ -250,7 +292,7 @@ const PhotoCard = ({ item, currentUserId }) => {
              <Text style={styles.count}>{item.shares || 0}</Text>
            </TouchableOpacity>
 
-           <TouchableOpacity style={styles.actionButton} onPress={() => setShowLocationModal(true)}>
+           <TouchableOpacity style={styles.actionButton} onPress={() => navigation.navigate('Map')}>
              <Image source={Location} style={styles.iconImage} resizeMode="contain" />
              <Text style={styles.count}>{item.maps || 0}</Text>
            </TouchableOpacity>
