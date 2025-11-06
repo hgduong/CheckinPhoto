@@ -14,7 +14,7 @@ import { callGemini } from "../services/gemini"; // Đảm bảo đúng đườn
 export default function ChatScreen({ route, navigation }) {
   const { chatUser } = route.params;
   const [messages, setMessages] = useState([]);
-  const [input, setInput] = useState("");
+  const [input, setInput] = useState(""); 
   const [chatId, setChatId] = useState(null);
   const flatListRef = useRef(null);
   const currentUid = auth.currentUser?.uid;
