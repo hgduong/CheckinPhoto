@@ -1,12 +1,12 @@
 {
   "expo": {
-    "name": "checkinphoto",
-    "slug": "checkinphoto",
+  "name": "Here You",
+  "slug": "here-you",
     "version": "1.0.0",
     "orientation": "portrait",
     "userInterfaceStyle": "light",
     "newArchEnabled": true,
-    "icon": "../assets/logoapp.png",
+  "icon": "./assets/logoapp.png",
     "ios": {
       "supportsTablet": true,
       "bundleIdentifier": "com.hgduong.checkinphoto",
