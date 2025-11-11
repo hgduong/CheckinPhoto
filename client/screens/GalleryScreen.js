@@ -1,4 +1,5 @@
-import React, { useState, useEffect } from 'react';
+// client/screens/GalleryScreen.js
+import React, { useState, useCallback } from 'react';
 import {
   StyleSheet,
   View,
@@ -6,116 +7,66 @@ import {
   Image,
   FlatList,
   TouchableOpacity,
-  Modal,
-  TextInput,
-  ScrollView,
   ActivityIndicator,
   RefreshControl,
   Alert,
   Dimensions,
+  Modal,
+  SafeAreaView,
+  StatusBar,
 } from 'react-native';
-import * as Location from 'expo-location';
-import MaterialIcons from '@expo/vector-icons/MaterialIcons';
-import { useFocusEffect } from '@react-navigation/native';
 import AsyncStorage from '@react-native-async-storage/async-storage';
-import * as FileSystem from 'expo-file-system/legacy';
-
-// Firebase
-import { collection, addDoc, serverTimestamp } from 'firebase/firestore';
-import { auth, db } from '../firebaseConfig';
-
-// Appwrite
-import { ID } from 'react-native-appwrite';
-import { AppwriteClientFactory } from '../appwrite.config';
-const storage = AppwriteClientFactory.getInstance().storage;
+import { useFocusEffect } from '@react-navigation/native';
+import CreateCaptionScreen from './CreateCaptionScreen';
 
 const { width } = Dimensions.get('window');
+const ITEM_WIDTH = (width - 40) / 3 - 10;
 
 export default function GalleryScreen({ navigation }) {
   const [images, setImages] = useState([]);
-  const [loading, setLoading] = useState(false);
-  const [fetchError, setFetchError] = useState(null);
-  const [selectedImage, setSelectedImage] = useState(null);
-  const [modalVisible, setModalVisible] = useState(false);
-  const [editMode, setEditMode] = useState(false);
-  const [aiSuggestions, setAiSuggestions] = useState([]);
-  const [editedSuggestions, setEditedSuggestions] = useState('');
   const [regions, setRegions] = useState([]);
-  const [selectedRegion, setSelectedRegion] = useState(null);
-  // Removed comment-related states
+  const [loading, setLoading] = useState(false);
+  const [modalVisible, setModalVisible] = useState(false);
+  const [selectedImage, setSelectedImage] = useState(null);
 
-
+  // Tải ảnh khi vào màn hình
   useFocusEffect(
-    React.useCallback(() => {
+    useCallback(() => {
       loadImages();
     }, [])
   );
 
   const loadImages = async () => {
     setLoading(true);
-    setFetchError(null);
     try {
-      // Check LOCAL_POSTS storage
-      const rawLocal = await AsyncStorage.getItem('LOCAL_POSTS');
-      const local = rawLocal ? JSON.parse(rawLocal) : [];
-      console.log('📸 Gallery: LOCAL_POSTS has', local.length, 'photos');
+      const raw = await AsyncStorage.getItem('APPWRITE_POSTS');
+      const posts = raw ? JSON.parse(raw) : [];
 
-      // Check APPWRITE_POSTS storage
-      const rawAppwrite = await AsyncStorage.getItem('APPWRITE_POSTS');
-      const appwrite = rawAppwrite ? JSON.parse(rawAppwrite) : [];
-      console.log('📸 Gallery: APPWRITE_POSTS has', appwrite.length, 'photos');
+      const processed = posts
+        .map(photo => ({
+          ...photo,
+          uri: photo.uri || photo.localUri,
+        }))
+        .filter(p => p.uri)
+        .sort((a, b) => (b.createdAt || 0) - (a.createdAt || 0));
 
-      // Log details of LOCAL_POSTS
-      if (local.length > 0) {
-        console.log('📸 Gallery: LOCAL_POSTS sample:', local.slice(0, 3).map(p => ({ id: p.id, uri: p.uri ? p.uri.substring(0, 50) + '...' : 'undefined' })));
-      }
-
-      // Log details of APPWRITE_POSTS
-      if (appwrite.length > 0) {
-        console.log('📸 Gallery: APPWRITE_POSTS sample:', appwrite.slice(0, 3).map(p => ({ id: p.id, uri: p.uri ? p.uri.substring(0, 50) + '...' : 'undefined' })));
-      }
-
-      // Combine photos from both storages
-      const allPhotos = [...local, ...appwrite];
-      console.log('📸 Gallery: Total photos from both storages:', allPhotos.length);
-
-      // For Appwrite photos, use localUri if uri is undefined
-      const processedPhotos = allPhotos.map(photo => {
-        if (photo && !photo.uri && photo.localUri) {
-          console.log('📸 Gallery: Using localUri for Appwrite photo:', photo.id);
-          return { ...photo, uri: photo.localUri };
-        }
-        return photo;
-      }).filter(photo => photo && photo.uri);
-
-      console.log('📸 Gallery: Total valid photos after processing:', processedPhotos.length);
-      console.log('📸 Gallery: Filtered out', allPhotos.length - processedPhotos.length, 'invalid photos');
-
-      // Use processed photos
-      const photosToDisplay = processedPhotos;
-
-      if (Array.isArray(allPhotos) && allPhotos.length > 0) {
-        // Sort by createdAt descending (newest first)
-        allPhotos.sort((a, b) => (b.createdAt || 0) - (a.createdAt || 0));
-
-        // derive regions from processed photos
-        const regionGroups = photosToDisplay.reduce((groups, image) => {
-          const region = image.address?.district || image.address?.city || image.address?.region || 'Local';
-          if (!groups[region]) groups[region] = [];
-          groups[region].push(image);
-          return groups;
+      if (processed.length > 0) {
+        const groups = processed.reduce((acc, img) => {
+          const region = img.address?.district || img.address?.city || 'Local';
+          if (!acc[region]) acc[region] = [];
+          acc[region].push(img);
+          return acc;
         }, {});
-        setRegions(Object.keys(regionGroups));
-        setImages(photosToDisplay);
+
+        setRegions(Object.keys(groups));
+        setImages(processed);
       } else {
-        // no posts — show empty state
-        console.log('📸 Gallery: No photos found in any storage');
         setRegions([]);
         setImages([]);
       }
     } catch (error) {
-      console.warn('Error loading images:', error);
-      setFetchError(error.message || String(error));
+      console.error('Lỗi tải ảnh:', error);
+      Alert.alert('Lỗi', 'Không thể tải thư viện ảnh');
       setImages([]);
       setRegions([]);
     } finally {
@@ -123,447 +74,221 @@ export default function GalleryScreen({ navigation }) {
     }
   };
 
-  const onRefresh = React.useCallback(() => {
-    loadImages();
-  }, []);
-
-
-
-  const handleImageSelect = async (image) => {
-    setSelectedImage(image);
-    // Always use the current aiDescription from the image object
-    setEditedSuggestions(image.aiDescription || '');
+  const handleImagePress = (item) => {
+    setSelectedImage(item);
     setModalVisible(true);
   };
 
-
-
-
-  const handleUpload = async () => {
-    try {
-      if (!selectedImage) return Alert.alert('Lỗi', 'Không có ảnh để tải lên');
-
-      const currentUser = auth.currentUser;
-      if (!currentUser) {
-        Alert.alert('Lỗi', 'Bạn cần đăng nhập để upload');
-        return;
-      }
-
-      // Prepare native file for Appwrite
-      const prepareNativeFile = async (uri, filename = `photo_${Date.now()}.jpg`) => {
-        try {
-          const info = await FileSystem.getInfoAsync(uri);
-          return { name: filename, size: info.size || 0, type: 'image/jpeg', uri };
-        } catch (e) {
-          console.error('prepareNativeFile error', e);
-          throw e;
-        }
-      };
-
-      const file = await prepareNativeFile(selectedImage.uri);
-
-      // Upload to Appwrite
-      const res = await storage.createFile(
-        process.env.EXPO_PUBLIC_APPWRITE_BUCKET_ID,
-        ID.unique(),
-        file
-      );
-
-      // Try to get public file URL; some SDKs return href, otherwise construct
-      let fileView;
-      try {
-        fileView = await storage.getFileView(process.env.EXPO_PUBLIC_APPWRITE_BUCKET_ID, res.$id);
-      } catch (e) {
-        try {
-          fileView = storage.getFileView(process.env.EXPO_PUBLIC_APPWRITE_BUCKET_ID, res.$id);
-        } catch (e2) {
-          fileView = null;
-        }
-      }
-
-  const possibleUrl = (fileView && fileView.href) || (typeof fileView === 'string' ? fileView : null) || `${process.env.EXPO_PUBLIC_APPWRITE_ENDPOINT}/storage/buckets/${process.env.EXPO_PUBLIC_APPWRITE_BUCKET_ID}/files/${res.$id}/view?project=${process.env.EXPO_PUBLIC_APPWRITE_PROJECT_ID}`;
-
-      // Build post object for local display (APPWRITE_POSTS)
-      const post = {
-        id: res.$id,
-        uri: possibleUrl,
-        localUri: selectedImage.uri,
-        title: editedSuggestions || selectedImage.aiDescription || 'Ảnh của tôi',
-        description: editedSuggestions || selectedImage.aiDescription || '',
-        author: {
-          id: currentUser.uid,
-        },
-        createdAt: Date.now(),
-        location: selectedImage.address || null,
-      };
-
-      // Save to AsyncStorage for APPWRITE_POSTS (so Gallery shows immediately)
-      const raw = await AsyncStorage.getItem('APPWRITE_POSTS');
-      const arr = raw ? JSON.parse(raw) : [];
-      arr.unshift(post);
-      await AsyncStorage.setItem('APPWRITE_POSTS', JSON.stringify(arr));
-  // Update local state so the new post appears immediately
-  setImages(prev => [post, ...prev]);
-
-      // Also create Firestore post so HomeScreen (which listens to 'posts') will show it
-      const firestorePost = {
-        author: {
-          id: currentUser.uid,
-          name: currentUser.displayName || currentUser.email || 'Người dùng',
-          avatar: currentUser.photoURL || null,
-        },
-        title: post.title,
-        description: post.description,
-        image: possibleUrl,
-        likes: 0,
-        likedBy: [],
-        comments: 0,
-        shares: 0,
-        maps: post.location ? 1 : 0,
-        location: post.location || null,
-        createdAt: serverTimestamp(),
-      };
-
-      try {
-        const docRef = await addDoc(collection(db, 'posts'), firestorePost);
-        console.log('📸 Gallery: Firestore post created:', docRef.id);
-      } catch (e) {
-        console.warn('Could not create Firestore post, continuing with Appwrite storage only', e.message || e);
-      }
-
-      Alert.alert('Thành công', 'Ảnh đã được tải lên', [{ text: 'OK', onPress: () => {
-        setModalVisible(false);
-        setSelectedImage(null);
-        setEditedSuggestions('');
-      } }]);
-    } catch (error) {
-      console.error('Upload error:', error);
-      Alert.alert('Lỗi', 'Không thể upload ảnh: ' + (error?.message || error));
-    }
+  const handleCloseModal = () => {
+    setModalVisible(false);
+    setTimeout(() => setSelectedImage(null), 300);
   };
 
-  const handleDelete = async () => {
-    Alert.alert(
-      'Xóa ảnh',
-      'Bạn có chắc muốn xóa ảnh này không? Hành động này không thể hoàn tác.',
-      [
-        { text: 'Hủy', style: 'cancel' },
-        {
-          text: 'Xóa',
-          style: 'destructive',
-          onPress: async () => {
-            try {
-              // Check which storage the image belongs to
-              const isLocalPost = selectedImage.id.startsWith('local_');
-              const storageKey = isLocalPost ? 'LOCAL_POSTS' : 'APPWRITE_POSTS';
-
-              console.log('📸 Gallery: Deleting from', storageKey, 'image ID:', selectedImage.id);
-
-              // Remove from the appropriate AsyncStorage
-              const rawPosts = await AsyncStorage.getItem(storageKey);
-              if (rawPosts) {
-                let posts = JSON.parse(rawPosts);
-                posts = posts.filter(post => post.id !== selectedImage.id);
-                await AsyncStorage.setItem(storageKey, JSON.stringify(posts));
-
-                // Reload images to reflect changes
-                await loadImages();
-
-                // Close modal
-                setModalVisible(false);
-                setSelectedImage(null);
-
-                Alert.alert('Đã xóa', 'Ảnh đã được xóa thành công.');
-              }
-            } catch (error) {
-              console.error('Error deleting image:', error);
-              Alert.alert('Lỗi', 'Không thể xóa ảnh. Vui lòng thử lại.');
-            }
-          },
-        },
-      ],
-      { cancelable: true }
-    );
+  const handlePostSuccess = () => {
+    handleCloseModal();
+    loadImages(); // Cập nhật lại thư viện
   };
 
   const renderImageItem = ({ item }) => (
-    <TouchableOpacity onPress={() => handleImageSelect(item)} style={styles.imageItem}>
-      <Image
-        source={{ uri: item.uri }}
-        style={styles.gridImage}
-      />
+    <TouchableOpacity
+      onPress={() => handleImagePress(item)}
+      style={styles.imageItem}
+      activeOpacity={0.75}
+    >
+      <Image source={{ uri: item.uri }} style={styles.gridImage} />
+      <View style={styles.overlay}>
+        <Text style={styles.overlayText}>
+          {new Date(item.createdAt).toLocaleTimeString('vi-VN', {
+            hour: '2-digit',
+            minute: '2-digit',
+          })}
+        </Text>
+      </View>
     </TouchableOpacity>
   );
 
   const renderRegionSection = ({ item: region }) => {
-    const regionImages = images.filter(img => img.address?.district === region || img.address?.city === region || img.address?.region === region || (!img.address && region === 'Local'));
-    console.log(`📸 Gallery: Region "${region}" has ${regionImages.length} photos`);
+    const regionImages = images.filter(img =>
+      img.address?.district === region ||
+      img.address?.city === region ||
+      (!img.address && region === 'Local')
+    );
 
     return (
       <View style={styles.regionSection}>
-        <Text style={styles.regionTitle}>{region} ({regionImages.length})</Text>
+        <Text style={styles.regionTitle}>
+          {region} ({regionImages.length})
+        </Text>
         <FlatList
           data={regionImages}
           renderItem={renderImageItem}
-          keyExtractor={(item) => item.id}
+          keyExtractor={item => item.id}
           numColumns={3}
           contentContainerStyle={styles.gridContainer}
+          showsVerticalScrollIndicator={false}
         />
       </View>
     );
   };
 
-  // Removed comment-related functions
-
-
-
   return (
-    <View style={styles.container}>
-      {loading ? (
-        <View style={{ flex: 1, justifyContent: 'center', alignItems: 'center' }}>
-          <ActivityIndicator size="large" />
-          <Text style={{ marginTop: 10 }}>Loading images...</Text>
-        </View>
-      ) : fetchError ? (
-        <View style={{ flex: 1, justifyContent: 'center', alignItems: 'center', padding: 20 }}>
-          <Text style={{ color: 'red', textAlign: 'center', marginBottom: 10 }}>Could not load images: {fetchError}</Text>
-          <Text style={{ textAlign: 'center', marginBottom: 12 }}>If you're testing on a physical device, make sure `client/config.js` points to your computer's IP (not localhost) and that the backend is running.</Text>
-          <TouchableOpacity onPress={loadImages} style={{ backgroundColor: '#2196F3', padding: 10, borderRadius: 8 }}>
-            <Text style={{ color: 'white' }}>Retry</Text>
-          </TouchableOpacity>
-        </View>
-      ) : (
-        (regions && regions.length > 0) ? (
+    <SafeAreaView style={styles.safeArea}>
+      <StatusBar barStyle="dark-content" backgroundColor="#fff" />
+      <View style={styles.container}>
+        {loading ? (
+          <View style={styles.loadingContainer}>
+            <ActivityIndicator size="large" color="#2196F3" />
+            <Text style={styles.loadingText}>Đang tải ảnh...</Text>
+          </View>
+        ) : regions.length > 0 ? (
           <FlatList
             data={regions}
             renderItem={renderRegionSection}
             keyExtractor={item => item}
-            refreshControl={<RefreshControl refreshing={loading} onRefresh={onRefresh} />}
+            refreshControl={
+              <RefreshControl refreshing={loading} onRefresh={loadImages} colors={['#2196F3']} />
+            }
+            showsVerticalScrollIndicator={false}
+            contentContainerStyle={styles.listContent}
           />
         ) : (
-          <View style={{ flex: 1, justifyContent: 'center', alignItems: 'center', padding: 20 }}>
-            <Text style={{ fontSize: 16, marginBottom: 12 }}>No images yet.</Text>
-            <TouchableOpacity onPress={() => navigation.navigate('Camera')} style={{ backgroundColor: '#2196F3', padding: 10, borderRadius: 8 }}>
-              <Text style={{ color: 'white' }}>Open Camera</Text>
-            </TouchableOpacity>
-          </View>
-        )
-      )}
-
-      <Modal
-        animationType="slide"
-        transparent={true}
-        visible={modalVisible}
-        onRequestClose={() => setModalVisible(false)}
-      >
-        <View style={styles.modalContainer}>
-          <View style={styles.modalContent}>
-            <Image
-              source={{ uri: selectedImage?.uri }}
-              style={styles.selectedImage}
-            />
-
-            <ScrollView style={styles.suggestionsContainer}>
-              {editMode ? (
-                <TextInput
-                  style={styles.suggestionsInput}
-                  multiline
-                  value={editedSuggestions}
-                  onChangeText={setEditedSuggestions}
-                  placeholder="Edit AI suggestions..."
-                />
-
-              ) : (
-                <View>
-                  <Text style={styles.suggestions}>{selectedImage?.aiDescription || editedSuggestions}</Text>
-                  {selectedImage?.likes !== undefined && (
-                    <View style={styles.likesContainer}>
-                      <MaterialIcons name="favorite" size={16} color="#2196F3" />
-                      <Text style={styles.likesText}>{selectedImage.likes} lượt thích</Text>
-                    </View>
-                  )}
-                </View>
-              )}
-            </ScrollView>
-
-            <View style={styles.actionButtons}>
-              <TouchableOpacity
-                style={styles.actionButton}
-                onPress={() => {
-                  if (editMode) {
-                    // Save changes
-                    const updatedImage = { ...selectedImage, aiDescription: editedSuggestions };
-                    // Update in AsyncStorage
-                    const storageKey = selectedImage.id.startsWith('local_') ? 'LOCAL_POSTS' : 'APPWRITE_POSTS';
-                    AsyncStorage.getItem(storageKey).then(raw => {
-                      if (raw) {
-                        let posts = JSON.parse(raw);
-                        posts = posts.map(p => p.id === selectedImage.id ? updatedImage : p);
-                        AsyncStorage.setItem(storageKey, JSON.stringify(posts)).then(() => {
-                          // Update the images array in state to reflect changes immediately
-                          setImages(prevImages =>
-                            prevImages.map(img => img.id === selectedImage.id ? updatedImage : img)
-                          );
-                          // Update selected image
-                          setSelectedImage(updatedImage);
-                          console.log('📸 Gallery: Caption updated for image:', selectedImage.id);
-                        });
-                      }
-                    });
-                  }
-                  setEditMode(!editMode);
-                }}
-              >
-                <MaterialIcons
-                  name={editMode ? "check" : "edit"}
-                  size={24}
-                  color="white"
-                />
-                <Text style={styles.buttonText}>
-                  {editMode ? "Save" : "Edit"}
-                </Text>
-              </TouchableOpacity>
-
-
-              <TouchableOpacity
-                style={styles.actionButton}
-                onPress={handleUpload}
-              >
-                <MaterialIcons name="cloud-upload" size={24} color="white" />
-                <Text style={styles.buttonText}>Upload</Text>
-              </TouchableOpacity>
-
-              <TouchableOpacity
-                style={[styles.actionButton, styles.deleteButton]}
-                onPress={handleDelete}
-              >
-                <MaterialIcons name="delete" size={24} color="white" />
-                <Text style={styles.buttonText}>Delete</Text>
-              </TouchableOpacity>
-            </View>
-
+          <View style={styles.emptyContainer}>
+            <Text style={styles.emptyTitle}>Chưa có ảnh nào</Text>
+            <Text style={styles.emptySubtitle}>
+              Hãy chụp ảnh để lưu vào thư viện
+            </Text>
             <TouchableOpacity
-              style={styles.closeButton}
-              onPress={() => setModalVisible(false)}
+              onPress={() => navigation.navigate('Camera')}
+              style={styles.cameraButton}
             >
-              <MaterialIcons name="close" size={24} color="white" />
+              <Text style={styles.cameraButtonText}>Mở Camera</Text>
             </TouchableOpacity>
           </View>
-        </View>
-      </Modal>
-    </View>
+        )}
+
+        {/* MODAL: TẠO CAPTION VỚI AI */}
+        <Modal
+          visible={modalVisible}
+          animationType="slide"
+          presentationStyle="pageSheet"
+          onRequestClose={handleCloseModal}
+        >
+          <SafeAreaView style={styles.modalSafeArea}>
+            {selectedImage && (
+              <CreateCaptionScreen
+                route={{ params: selectedImage }}
+                navigation={{
+                  goBack: handleCloseModal,
+                  navigate: () => {},
+                  setParams: () => {},
+                }}
+                onPostSuccess={handlePostSuccess}
+              />
+            )}
+          </SafeAreaView>
+        </Modal>
+      </View>
+    </SafeAreaView>
   );
 }
 
 const styles = StyleSheet.create({
-  container: {
+  safeArea: {
     flex: 1,
     backgroundColor: '#fff',
   },
-  horizontalList: {
-    paddingHorizontal: 10,
+  container: {
+    flex: 1,
+  },
+  loadingContainer: {
+    flex: 1,
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  loadingText: {
+    marginTop: 12,
+    fontSize: 16,
+    color: '#666',
+  },
+  listContent: {
+    paddingBottom: 20,
   },
   regionSection: {
-    marginVertical: 10,
-    paddingHorizontal: 10,
+    marginVertical: 12,
   },
   regionTitle: {
     fontSize: 18,
     fontWeight: 'bold',
-    marginBottom: 10,
-  },
-  gridImage: {
-    width: (width - 40) / 3 - 10, // 3 columns with padding
-    height: (width - 40) / 3 - 10,
-    margin: 5,
-    borderRadius: 8,
-    resizeMode: 'cover',
-  },
-  imageItem: {
-    flex: 1/3,
-    alignItems: 'center',
+    color: '#333',
+    paddingHorizontal: 16,
+    marginBottom: 8,
   },
   gridContainer: {
-    paddingHorizontal: 10,
+    paddingHorizontal: 12,
   },
-  modalContainer: {
+  imageItem: {
+    flex: 1 / 3,
+    margin: 5,
+    position: 'relative',
+    borderRadius: 12,
+    overflow: 'hidden',
+    elevation: 2,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 1 },
+    shadowOpacity: 0.1,
+    shadowRadius: 2,
+  },
+  gridImage: {
+    width: ITEM_WIDTH,
+    height: ITEM_WIDTH,
+    borderRadius: 12,
+  },
+  overlay: {
+    ...StyleSheet.absoluteFillObject,
+    backgroundColor: 'rgba(0,0,0,0.3)',
+    justifyContent: 'flex-end',
+    padding: 6,
+  },
+  overlayText: {
+    color: '#fff',
+    fontSize: 10,
+    fontWeight: '600',
+    textShadowColor: 'rgba(0,0,0,0.5)',
+    textShadowOffset: { width: 0, height: 1 },
+    textShadowRadius: 2,
+  },
+  emptyContainer: {
     flex: 1,
-    backgroundColor: 'rgba(0,0,0,0.5)',
     justifyContent: 'center',
     alignItems: 'center',
+    paddingHorizontal: 40,
   },
-  modalContent: {
-    width: '90%',
-    backgroundColor: 'white',
-    borderRadius: 20,
-    padding: 20,
-    alignItems: 'center',
-    maxHeight: '80%',
+  emptyTitle: {
+    fontSize: 20,
+    fontWeight: 'bold',
+    color: '#333',
+    marginBottom: 8,
   },
-  selectedImage: {
-    width: '100%',
-    height: 200,
-    borderRadius: 10,
-    marginBottom: 20,
-    resizeMode: 'contain',
-  },
-  suggestionsContainer: {
-    width: '100%',
-    maxHeight: 150,
-    marginBottom: 20,
-  },
-  suggestions: {
-    fontSize: 16,
-    lineHeight: 24,
-  },
-  suggestionsInput: {
-    fontSize: 16,
-    lineHeight: 24,
-    borderWidth: 1,
-    borderColor: '#ccc',
-    borderRadius: 8,
-    padding: 10,
-  },
-  likesContainer: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    marginTop: 8,
-    paddingTop: 8,
-    borderTopWidth: 1,
-    borderTopColor: '#eee',
-  },
-  likesText: {
+  emptySubtitle: {
     fontSize: 14,
-    color: '#2196F3',
-    marginLeft: 4,
+    color: '#888',
+    textAlign: 'center',
+    marginBottom: 24,
+  },
+  cameraButton: {
+    backgroundColor: '#2196F3',
+    paddingHorizontal: 24,
+    paddingVertical: 12,
+    borderRadius: 12,
+    elevation: 3,
+  },
+  cameraButtonText: {
+    color: '#fff',
+    fontSize: 16,
     fontWeight: '600',
   },
-  actionButtons: {
-    flexDirection: 'row',
-    justifyContent: 'space-around',
-    width: '100%',
-    marginTop: 20,
-  },
-  actionButton: {
-    backgroundColor: '#2196F3',
-    padding: 10,
-    borderRadius: 8,
-    flexDirection: 'row',
-    alignItems: 'center',
-  },
-  deleteButton: {
-    backgroundColor: '#dc3545',
-  },
-  buttonText: {
-    color: 'white',
-    marginLeft: 5,
-  },
-  closeButton: {
-    position: 'absolute',
-    top: 10,
-    right: 10,
-    backgroundColor: 'rgba(0,0,0,0.5)',
-    borderRadius: 15,
-    padding: 5,
+  modalSafeArea: {
+    flex: 1,
+    backgroundColor: '#f8f9fa',
   },
 });

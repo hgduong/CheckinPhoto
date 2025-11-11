@@ -1,314 +1,207 @@
-import React, { useState, useEffect } from "react";
+// client/screens/CreateCaptionScreen.js
+import React, { useState, useEffect } from 'react';
 import {
-  View,
-  Text,
-  Button,
-  Image,
-  StyleSheet,
-  TextInput,
-  ScrollView,
-  TouchableOpacity,
-  ActivityIndicator,
-  Alert,
-} from "react-native";
-import * as ImagePicker from "expo-image-picker";
-import * as Location from "expo-location";
-import * as FileSystem from "expo-file-system/legacy";
-import AsyncStorage from "@react-native-async-storage/async-storage";
-import { useNavigation, useRoute } from "@react-navigation/native";
-import CONFIG from "../config";
+  View, Text, Image, TextInput, TouchableOpacity, ActivityIndicator,
+  Alert, ScrollView, SafeAreaView, StyleSheet, KeyboardAvoidingView, Platform
+} from 'react-native';
+import * as FileSystem from 'expo-file-system';
+import AsyncStorage from '@react-native-async-storage/async-storage';
+import { generateAICaption } from "../services/caption";
 
-export default function CreateCaptionScreen() {
-  const navigation = useNavigation();
-  const route = useRoute();
+export default function CreateCaptionScreen({ route, navigation }) {
+  const params = route?.params || {};
+  const imageUri = params.uri || params.localUri || params.image;
+  const location = params.location || null;
+  const address = params.address || {};
+  const createdAt = params.createdAt ? Number(params.createdAt) : Date.now();
 
-  const [image, setImage] = useState(route.params?.image || null);
-  const [location, setLocation] = useState(route.params?.location || null);
-  const [caption, setCaption] = useState("");
-  const [description, setDescription] = useState("");
-  const [aiSuggestion, setAiSuggestion] = useState("");
-  const [loading, setLoading] = useState(false);
+  const [caption, setCaption] = useState('');
+  const [aiCaption, setAiCaption] = useState('');
   const [analyzing, setAnalyzing] = useState(false);
+  const [posting, setPosting] = useState(false);
 
   useEffect(() => {
-    if (image && !aiSuggestion) {
-      analyzeImage();
-    }
-  }, [image]);
+    if (imageUri) handleGenerateAICaption();
+    else Alert.alert('Lỗi', 'Không tìm thấy ảnh');
+  }, [imageUri]);
 
-  const pickImage = async () => {
-    const result = await ImagePicker.launchImageLibraryAsync({
-      allowsEditing: true,
-      aspect: [4, 3],
-      quality: 0.8,
-      base64: true,
-    });
-
-    if (!result.canceled && result.assets && result.assets[0]) {
-      setImage(result.assets[0].uri);
-      // Lấy location hiện tại
-      try {
-        const { status } = await Location.requestForegroundPermissionsAsync();
-        if (status === "granted") {
-          const loc = await Location.getCurrentPositionAsync({});
-          setLocation({
-            type: "Point",
-            coordinates: [loc.coords.longitude, loc.coords.latitude],
-          });
-        }
-      } catch (e) {
-        console.warn("Could not get location:", e);
-      }
-    }
-  };
-
-  const analyzeImage = async () => {
-    if (!image || CONFIG.OFFLINE_MODE) {
-      // Fallback: tạo caption giả lập
-      generateFallbackCaption();
-      return;
-    }
-
+  // === GỌI AI SERVICE ===
+  const handleGenerateAICaption = async () => {
     setAnalyzing(true);
     try {
-      // Đọc ảnh dưới dạng base64
-      const base64 = await FileSystem.readAsStringAsync(image, {
-        encoding: FileSystem.EncodingType.Base64,
+      const aiText = await generateAICaption(imageUri, {
+        full: address?.full || address?.district || address?.city || 'Việt Nam',
+        createdAt,
       });
-      const imageUri = `data:image/jpeg;base64,${base64}`;
-
-      const response = await fetch(`${CONFIG.API_BASE_URL}/analyze`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          imageUri,
-          latitude: location?.coordinates?.[1],
-          longitude: location?.coordinates?.[0],
-        }),
-        timeout: CONFIG.TIMEOUT,
-      });
-
-      const data = await response.json();
-
-      if (data.ai?.aiDescription) {
-        setAiSuggestion(data.ai.aiDescription);
-        setDescription(data.ai.aiDescription);
-      } else {
-        generateFallbackCaption();
-      }
-    } catch (error) {
-      console.error("Error analyzing image:", error);
-      generateFallbackCaption();
+      setAiCaption(aiText);
+      setCaption(aiText);
+    } catch (err) {
+      console.warn('AI lỗi:', err);
+      const fallback = `Khoảnh khắc đáng nhớ lúc ${new Date(createdAt).toLocaleTimeString('vi-VN')} tại ${address?.city || 'Việt Nam'}`;
+      setAiCaption(fallback);
+      setCaption(fallback);
     } finally {
       setAnalyzing(false);
     }
   };
 
-  const generateFallbackCaption = () => {
-    const captions = [
-      "Hoàng hôn Hồ Tây - Ánh nắng cuối ngày tuyệt đẹp",
-      "Khám phá vẻ đẹp núi rừng Tây Bắc",
-      "Một ngày bình yên bên hồ",
-      "Check-in giữa thiên nhiên hùng vĩ",
-      "Khoảnh khắc đáng nhớ",
-    ];
-    const random = captions[Math.floor(Math.random() * captions.length)];
-    setAiSuggestion(random);
-    setDescription(random);
-  };
-
-  const handleSave = async () => {
-    if (!image) {
-      Alert.alert("Lỗi", "Vui lòng chọn ảnh");
+  // === LƯU BÀI VIẾT ===
+  const handlePost = async () => {
+    if (!imageUri) {
+      Alert.alert('Lỗi', 'Không có ảnh để đăng');
       return;
     }
-
-    setLoading(true);
+    setPosting(true);
     try {
-      // Lưu vào local storage
-      const APP_PHOTO_DIR = FileSystem.documentDirectory + "photos/";
-      const dirInfo = await FileSystem.getInfoAsync(APP_PHOTO_DIR);
-      if (!dirInfo.exists) {
-        await FileSystem.makeDirectoryAsync(APP_PHOTO_DIR, { intermediates: true });
-      }
+      // ✅ Bước 1: tạo thư mục posts
+      const dir = FileSystem.documentDirectory + 'posts/';
+      await FileSystem.makeDirectoryAsync(dir, { intermediates: true });
 
-      const ts = Date.now();
-      const filename = `photo_${ts}.jpg`;
-      const dest = APP_PHOTO_DIR + filename;
-      await FileSystem.copyAsync({ from: image, to: dest });
+      // ✅ Bước 2: đảm bảo file ảnh có thể đọc được (vì đôi khi imageUri là "content://")
+      const tempPath = FileSystem.cacheDirectory + `temp_${Date.now()}.jpg`;
+      await FileSystem.copyAsync({ from: imageUri, to: tempPath });
 
+      // ✅ Bước 3: copy sang thư mục posts
+      const filename = `post_${Date.now()}.jpg`;
+      const dest = dir + filename;
+      await FileSystem.copyAsync({ from: tempPath, to: dest });
+
+      // ✅ Bước 4: lưu bài viết vào AsyncStorage
       const post = {
-        id: `local_${ts}`,
+        id: `post_${Date.now()}`,
         uri: dest,
-        createdAt: ts,
-        title: caption || "Untitled",
-        description: description || aiSuggestion || "",
-        aiDescription: aiSuggestion,
-        location: location || null,
+        caption: caption.trim() || 'Không có chú thích',
+        createdAt: Date.now(),
+        location,
+        address,
       };
 
-      const raw = await AsyncStorage.getItem("LOCAL_POSTS");
-      let arr = raw ? JSON.parse(raw) : [];
-      arr.unshift(post);
-      await AsyncStorage.setItem("LOCAL_POSTS", JSON.stringify(arr));
+      const raw = await AsyncStorage.getItem('LOCAL_POSTS');
+      const list = raw ? JSON.parse(raw) : [];
+      list.unshift(post);
+      await AsyncStorage.setItem('LOCAL_POSTS', JSON.stringify(list));
 
-      Alert.alert("Thành công", "Đã lưu ảnh vào thư viện", [
-        {
-          text: "OK",
-          onPress: () => {
-            // Reset về Camera tab, sau đó navigate sang Gallery
-            navigation.navigate("Camera", { screen: "CameraMain" });
-            setTimeout(() => {
-              navigation.navigate("Gallery");
-            }, 100);
-          }
-        },
+      Alert.alert('✅ Thành công!', 'Bài viết đã được đăng.', [
+        { text: 'OK', onPress: () => navigation.goBack() },
       ]);
-    } catch (error) {
-      console.error("Error saving:", error);
-      Alert.alert("Lỗi", "Không thể lưu ảnh");
+    } catch (e) {
+      console.log('❌ Lỗi khi đăng bài:', e);
+      Alert.alert('❌ Lỗi', 'Không thể đăng bài. Ảnh có thể không đọc được.');
     } finally {
-      setLoading(false);
+      setPosting(false);
     }
   };
 
+  const formatTime = () =>
+    new Date(createdAt).toLocaleString('vi-VN', {
+      weekday: 'short',
+      day: 'numeric',
+      month: 'short',
+      hour: '2-digit',
+      minute: '2-digit',
+    });
+
   return (
-    <ScrollView style={styles.container}>
-      <View style={styles.content}>
-        <Text style={styles.header}>Tạo Caption cho Ảnh</Text>
-
-        {!image ? (
-          <TouchableOpacity style={styles.pickButton} onPress={pickImage}>
-            <Text style={styles.pickButtonText}>📷 Chọn ảnh từ thư viện</Text>
+    <SafeAreaView style={styles.container}>
+      <KeyboardAvoidingView behavior={Platform.OS === 'ios' ? 'padding' : 'height'} style={{ flex: 1 }}>
+        {/* HEADER */}
+        <View style={styles.header}>
+          <TouchableOpacity onPress={() => navigation.goBack()} style={styles.closeBtn}>
+            <Text style={styles.closeText}>✕</Text>
           </TouchableOpacity>
-        ) : (
-          <>
-            <Image source={{ uri: image }} style={styles.image} />
+          <Text style={styles.title}>Tạo bài viết</Text>
+          <View style={{ width: 40 }} />
+        </View>
 
-            {analyzing && (
-              <View style={styles.analyzingContainer}>
-                <ActivityIndicator size="small" color="#2196F3" />
-                <Text style={styles.analyzingText}>Đang phân tích ảnh...</Text>
-              </View>
-            )}
-
-            {aiSuggestion && (
-              <View style={styles.suggestionBox}>
-                <Text style={styles.suggestionLabel}>💡 AI gợi ý:</Text>
-                <Text style={styles.suggestionText}>{aiSuggestion}</Text>
-              </View>
-            )}
-
-            <TextInput
-              style={styles.input}
-              placeholder="Tiêu đề (tùy chọn)"
-              value={caption}
-              onChangeText={setCaption}
-            />
-
-            <TextInput
-              style={[styles.input, styles.textArea]}
-              placeholder="Mô tả"
-              value={description}
-              onChangeText={setDescription}
-              multiline
-              numberOfLines={4}
-            />
-
-            <View style={styles.buttonRow}>
-              <TouchableOpacity
-                style={[styles.button, styles.cancelButton]}
-                onPress={() => navigation.goBack()}
-              >
-                <Text style={styles.cancelButtonText}>Hủy</Text>
-              </TouchableOpacity>
-
-              <TouchableOpacity
-                style={[styles.button, styles.saveButton]}
-                onPress={handleSave}
-                disabled={loading}
-              >
-                {loading ? (
-                  <ActivityIndicator size="small" color="#fff" />
-                ) : (
-                  <Text style={styles.saveButtonText}>Lưu</Text>
-                )}
-              </TouchableOpacity>
+        <ScrollView showsVerticalScrollIndicator={false}>
+          {/* ẢNH */}
+          {imageUri ? (
+            <Image source={{ uri: imageUri }} style={styles.image} resizeMode="cover" />
+          ) : (
+            <View style={[styles.image, { justifyContent: 'center', alignItems: 'center', backgroundColor: '#eee' }]}>
+              <Text style={{ color: '#999' }}>Không có ảnh</Text>
             </View>
-          </>
-        )}
-      </View>
-    </ScrollView>
+          )}
+
+          {/* THÔNG TIN */}
+          <View style={styles.info}>
+            <Text style={styles.time}>⏰ {formatTime()}</Text>
+            {address?.full && <Text style={styles.location}>📍 {address.full}</Text>}
+          </View>
+
+          {/* AI GỢI Ý */}
+          {analyzing ? (
+            <View style={styles.aiLoading}>
+              <ActivityIndicator size="small" color="#2196F3" />
+              <Text style={styles.aiText}>AI đang sáng tạo...</Text>
+            </View>
+          ) : (
+            aiCaption !== '' && (
+              <View style={styles.aiBox}>
+                <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' }}>
+                  <Text style={styles.aiLabel}>AI gợi ý:</Text>
+                  {/* 🔁 Nút tạo lại caption */}
+                  <TouchableOpacity onPress={handleGenerateAICaption}>
+                    <Text style={{ color: '#1976d2', fontWeight: '600' }}>Tạo lại 🔁</Text>
+                  </TouchableOpacity>
+                </View>
+
+                <Text style={styles.aiCaption}>{aiCaption}</Text>
+
+                <TouchableOpacity style={styles.useBtn} onPress={() => setCaption(aiCaption)}>
+                  <Text style={styles.useText}>Dùng ngay</Text>
+                </TouchableOpacity>
+              </View>
+            )
+          )}
+
+          {/* INPUT */}
+          <TextInput
+            style={styles.captionInput}
+            placeholder="Viết caption của bạn..."
+            value={caption}
+            onChangeText={setCaption}
+            multiline
+            textAlignVertical="top"
+          />
+        </ScrollView>
+
+        {/* NÚT ĐĂNG */}
+        <TouchableOpacity
+          style={[styles.postBtn, (!imageUri || posting) && styles.postBtnDisabled]}
+          onPress={handlePost}
+          disabled={!imageUri || posting}
+        >
+          {posting ? (
+            <ActivityIndicator size="small" color="#fff" />
+          ) : (
+            <Text style={styles.postText}>Đăng bài</Text>
+          )}
+        </TouchableOpacity>
+      </KeyboardAvoidingView>
+    </SafeAreaView>
   );
 }
 
 const styles = StyleSheet.create({
-  container: { flex: 1, backgroundColor: "#f2f9ff" },
-  content: { padding: 20 },
-  header: {
-    fontSize: 24,
-    fontWeight: "bold",
-    textAlign: "center",
-    marginBottom: 20,
-    color: "#333",
-  },
-  pickButton: {
-    backgroundColor: "#2196F3",
-    padding: 15,
-    borderRadius: 10,
-    alignItems: "center",
-    marginTop: 50,
-  },
-  pickButtonText: { color: "#fff", fontSize: 16, fontWeight: "600" },
-  image: {
-    width: "100%",
-    height: 300,
-    borderRadius: 10,
-    marginBottom: 15,
-  },
-  analyzingContainer: {
-    flexDirection: "row",
-    alignItems: "center",
-    justifyContent: "center",
-    padding: 10,
-  },
-  analyzingText: { marginLeft: 10, color: "#666" },
-  suggestionBox: {
-    backgroundColor: "#e3f2fd",
-    padding: 15,
-    borderRadius: 10,
-    marginBottom: 15,
-  },
-  suggestionLabel: { fontSize: 14, fontWeight: "600", marginBottom: 5 },
-  suggestionText: { fontSize: 14, color: "#333" },
-  input: {
-    backgroundColor: "#fff",
-    padding: 12,
-    borderRadius: 8,
-    borderWidth: 1,
-    borderColor: "#ddd",
-    marginBottom: 15,
-    fontSize: 16,
-  },
-  textArea: { height: 100, textAlignVertical: "top" },
-  buttonRow: {
-    flexDirection: "row",
-    justifyContent: "space-between",
-    marginTop: 10,
-  },
-  button: {
-    flex: 1,
-    padding: 15,
-    borderRadius: 8,
-    alignItems: "center",
-    marginHorizontal: 5,
-  },
-  cancelButton: {
-    backgroundColor: "#fff",
-    borderWidth: 1,
-    borderColor: "#ddd",
-  },
-  cancelButtonText: { color: "#666", fontWeight: "600" },
-  saveButton: { backgroundColor: "#2196F3" },
-  saveButtonText: { color: "#fff", fontWeight: "600" },
+  container: { flex: 1, backgroundColor: '#fff' },
+  header: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', paddingHorizontal: 16, paddingVertical: 12, borderBottomWidth: 1, borderBottomColor: '#eee' },
+  closeBtn: { width: 40, height: 40, justifyContent: 'center', alignItems: 'center' },
+  closeText: { fontSize: 28, color: '#666' },
+  title: { fontSize: 18, fontWeight: 'bold', color: '#333' },
+  image: { width: '100%', height: 380, backgroundColor: '#f0f0f0' },
+  info: { flexDirection: 'row', justifyContent: 'space-between', padding: 16, paddingBottom: 8 },
+  time: { fontSize: 14, color: '#555', fontWeight: '500' },
+  location: { fontSize: 14, color: '#555', fontWeight: '500' },
+  aiLoading: { flexDirection: 'row', alignItems: 'center', padding: 16, backgroundColor: '#f0f8ff', marginHorizontal: 16, borderRadius: 12, marginBottom: 12 },
+  aiText: { marginLeft: 8, color: '#2196F3', fontWeight: '500' },
+  aiBox: { backgroundColor: '#e3f2fd', padding: 16, margin: 16, borderRadius: 16, borderLeftWidth: 4, borderLeftColor: '#2196F3' },
+  aiLabel: { fontSize: 15, fontWeight: 'bold', color: '#1976d2', marginBottom: 6 },
+  aiCaption: { fontSize: 15, color: '#333', lineHeight: 22, marginVertical: 10 },
+  useBtn: { alignSelf: 'flex-start', backgroundColor: '#2196F3', paddingHorizontal: 14, paddingVertical: 6, borderRadius: 20 },
+  useText: { color: '#fff', fontSize: 13, fontWeight: '600' },
+  captionInput: { backgroundColor: '#f9f9f9', marginHorizontal: 16, marginBottom: 16, padding: 14, borderRadius: 12, height: 110, fontSize: 16, borderWidth: 1, borderColor: '#eee' },
+  postBtn: { backgroundColor: '#2196F3', marginHorizontal: 16, marginBottom: 20, padding: 16, borderRadius: 16, alignItems: 'center', elevation: 3 },
+  postBtnDisabled: { backgroundColor: '#90caf9', elevation: 0 },
+  postText: { color: '#fff', fontSize: 17, fontWeight: 'bold' },
 });
